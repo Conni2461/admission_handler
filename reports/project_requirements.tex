@@ -1,0 +1,11 @@
+\documentclass[runningheads]{llncs}
+\usepackage{enumitem}
+
+\begin{document}
+\begin{description}
+    \item [Dynamic discovery:] In case of a surge of guests to the venue, additional devices must be able to join the system without changing the current count and obtain the current state of the system. Causal ordering of messages is required to ensure that visitors are admitted in the correct order.
+    \item [Leader election:] New devices must be authorized to join the system.
+    \item [Reliable ordered multicast:] All devices must be able to display the current count of people inside the venue. The order of value increments must be reliable to prevent overstepping the maximum capacity. Messages may not get lost as this would mean unaccounted visitors.
+    \item [Fault tolerance:] The failure or disconnection of a client component should not influence the system. System components must be redundant to prevent the loss of data, as this would cause the
+    \end{description}
+\end{document}
