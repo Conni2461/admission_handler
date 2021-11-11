@@ -1,0 +1,20 @@
+Servergroup with leader -> we have to implement voting etc.
+Every server has groupview
+Leader has final say on groupview
+Leader pings servers, broadcasts new groupview in case of failure
+
+Clients attach to first server that responds to them?
+or
+Client always broadcasts request (-> any server can crash and we don't care)
+
+Client - Server "3 or more-way Handshake" for incrementing visitor counter
+-> includes who got in, to later get order and if request was successful
+-> includes current free spots in server response (to get an idea of how many spots are left)
+-> server that handles request has to check with other servers if request is actually successful (-> reliable ordered multicast thingy)
+
+2 laptops -> one for servers, one for clients
+Servers maintain db with order?
+	-> SQLite memory db pro server?
+	-> simply in memory?
+
+https://sequencediagram.org/

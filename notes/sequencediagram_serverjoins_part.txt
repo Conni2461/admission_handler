@@ -1,0 +1,12 @@
+title server joins
+
+participant newserver
+participant network
+participant existingservers
+
+newserver->network: hi
+network->existingservers: hi
+existingservers<-existingservers: add server
+existingservers-->newserver:welcome
+newserver->leader:
+
