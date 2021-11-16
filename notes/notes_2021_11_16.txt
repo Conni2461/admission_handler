@@ -1,0 +1,45 @@
+From discussion:
+
+- How are we performing dynamic discovery?
+- Election is not clear , how will we elect, based on what, which system components are part of the election?
+- Why do we need total ordering? Is causal ordering enough?
+- How will redundancy help fault tolerance? How are we going to maintain the global state of the system?
+- What is meant by the dot in the middle of the architecture? - broadcast?
+- How are we going to keep the system fully in sync? When one client increases, all clients must increase.
+
+
+Other thoughts:
+
+- Do we save the state and maintain it on each device or does each client request increment?
+- How do we keep track of the current count? On the servers or on the clients? On the leader?
+- Do we need request/ reply? because that would perhaps be beside the point of a distributed system? (all data could be on the server and the client only requests)
+
+
+Suggestions:
+
+- Clients keep the state of the system
+- Servers are responsible for ordering, redistribution
+- Leader is responsible for:
+    - authorization
+    - polling the current state of the system and decide on the current state
+        - if a leader goes down, the new leader must take care of this.
+            - does the leader poll the other servers or the clients (depends who is keeping the state)
+
+- How does a client join the system?
+    - how is the current state synced to the client?
+
+- How does a server join the system?
+    - how is the current state synced to the server? is it synced? what else must happen?
+
+- How do clients connect to servers?
+    - broadcast and fixed connection
+    - always broadcast?
+
+- What happens when a client increments the counter? How is the whole system updated?
+
+- How is a fault detected on a client? (crash, out of sync, ...)
+    - How is it taken care of?
+
+- How is a fault detected on a server? (How on the leader?)
+    - What happens next?
+    - What if the leader crashes? How is the election triggered?
