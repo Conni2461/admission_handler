@@ -1,0 +1,37 @@
+check who entered first etc. -> Causal Ordering of events
+dynamic discovery -> broadcast, wait, see if leader exists?, join group/make group
+	-> responses sync the state etc.
+leader pings servers to check connection, also serves as proof that leader still exists
+leader broadcasts missing servers
+server broadcasts if leader ping times out, creates new group/starts new election
+election based on ? (see lecture on leader election first) chosen by servers, not clients
+dynamic discovery of servers by client via broadcast and choosing the first response?
+	-> server sends current state with response
+clients poll count periodically or when sending new requests (eventual consistency)
+sync -> flooding algorithm mit tree
+client broadcasts? request, one server answers
+	or client has a dedicated server
+client only sends a simple increment request
+server fault
+	-> clients look for new server
+	-> leader/other servers notice and react accordingly
+	-> leader looks for other groups periodically (via broadcast)?
+	-> does the server get purged from multicast?
+		-> depending on this, needs different recovery methods
+
+legend: -> tcp => multicast
+
+client -> server -> leader => server -> clients
+- leader does everything, makes server group essentially useless? Apart from fault tolerance
+> server group with leader
+
+client -> server => servers -> clients
+- how to guarantee causal ordering of two different requests coming in at different servers
+- no election of leader etc.
+> server peer to peer
+> maybe still have a leader for authentication?
+
+
+
+unclear:
+do we need a leader?
