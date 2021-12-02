@@ -1,0 +1,21 @@
+Implementation:
+
+0. Project Structure
+1. Dynamic Discovery
+    1.1. Hosts
+        1.1.1. Group View etc.
+    1.2. Clients
+2. (Abstract) Client Logic
+3. Leader Election (Ring-Election?)
+4. Multicast
+    4.1. Infrastructure
+    4.1. Reliable
+    4.2. Ordered
+5. Failure-Model
+    5.1. Clients
+    5.2. Hosts
+        5.2.1. Leader
+Optional:
+6. Visualization
+    6.1. Client UI
+    6.2. Monitoring
