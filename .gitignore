@@ -5,3 +5,4 @@
 *.gz
 *.fdb_latexmk
 *.vscode
+*.pyc

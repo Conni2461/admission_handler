@@ -1,9 +1,16 @@
 import socket
-from constants import BROADCAST_PORT
 import sys
+from threading import Thread
 
-class Listener:
+from louie import dispatcher
+
+from .constants import BROADCAST_PORT
+from .signals import ON_BROADCAST_MESSAGE
+
+
+class Listener(Thread):
     def __init__(self):
+        super().__init__()
         self.listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         # Set the socket to broadcast and enable reusing addresses
         if sys.platform == "win32":
@@ -19,10 +26,18 @@ class Listener:
         while True:
             data, addr = self.listen_socket.recvfrom(1024)
             if data:
-                print("Received broadcast message:", data.decode(), addr)
+                dispatcher.send(signal=ON_BROADCAST_MESSAGE, sender=self, data=data.decode(), addr=addr)
 
+class Server:
+    def __init__(self):
+        self._listener = Listener()
+        self._listener.start()
 
+        dispatcher.connect(self.on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._listener)
 
-if __name__ == '__main__':
-    listener = Listener()
-    listener.run()
+    def on_udp_msg(self, data=None, addr=None):
+        print("Received broadcast message:", data, addr)
+
+    def run(self):
+        while True:
+            pass
