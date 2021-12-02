@@ -4,8 +4,8 @@ from threading import Thread
 
 from louie import dispatcher
 
-from .constants import BROADCAST_PORT
-from .signals import ON_BROADCAST_MESSAGE
+from ..utils.constants import BROADCAST_PORT
+from ..utils.signals import ON_BROADCAST_MESSAGE
 
 
 class Listener(Thread):
