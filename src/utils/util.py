@@ -21,3 +21,4 @@ def broadcast(port, broadcast_message):
 class CustomLogger(logging.getLoggerClass()):
     def __init__(self, name, level=logging.INFO):
         super().__init__(name)
+        self.setLevel(level)
