@@ -6,4 +6,4 @@
 *.fdb_latexmk
 *.vscode
 *.pyc
-**/venv
+.venv
