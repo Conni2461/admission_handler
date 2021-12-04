@@ -1,2 +1,16 @@
+from enum import Enum
+
 BROADCAST_IP = "192.168.0.255"
 BROADCAST_PORT = 5973
+CLIENT_BASE_PORT = 5980  # TODO: adjust as needed
+IDENT_SERVER = 0
+IDENT_CLIENT = 1
+TIMEOUT = 0.5
+MAX_TRIES = 3
+BUFFER_SIZE = 1024
+
+
+class State(Enum):
+    PENDING = 0
+    LEADER = 1
+    MEMBER = 2

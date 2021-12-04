@@ -1,9 +1,13 @@
 import socket
 import sys
+import logging
+
 
 def broadcast(port, broadcast_message):
     # Create a UDP socket
-    broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    broadcast_socket = socket.socket(
+        socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
+    )
     # TODO On linux we need to do reuseport on windows reuseaddr
     if sys.platform == "win32":
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -12,3 +16,8 @@ def broadcast(port, broadcast_message):
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     broadcast_socket.sendto(str.encode(broadcast_message), ("<broadcast>", port))
     broadcast_socket.close()
+
+
+class CustomLogger(logging.getLoggerClass()):
+    def __init__(self, name, level=logging.INFO):
+        super().__init__(name)

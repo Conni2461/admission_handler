@@ -1,0 +1,12 @@
+1. New server wants to join
+    -> Broadcast with port on open tcp connection (new sever listens HERE)
+    -> New Server needs to wait with timeout (500ms) (min max 3 tries)
+1.1 Jemand ist da
+    -> got message from the tcp connection
+    -> set state to Member
+    -> start listener on broadcast port
+    -> Leader adds new Member to group view
+    -> Leader starts new election over multicast (if new ip is smaller than own ip)
+1.2 Niemand ist da
+    -> leader (state [Leader, Member, Disconnected, ...], groupView[])
+    -> start Listener on broadcast port
