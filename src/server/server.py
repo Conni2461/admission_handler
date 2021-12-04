@@ -44,6 +44,9 @@ class TCPListener:
     def set_timeout(self, value):
         self._socket.settimeout(value)
 
+    def send(self, mesg, dest):
+        self._socket.sendto(mesg.encode(), dest)
+
     def listen(self):
         try:
             data, address = self._socket.recvfrom(BUFFER_SIZE)
@@ -128,8 +131,14 @@ class Server:
 
     def on_udp_msg(self, data=None, addr=None):
         if self._state == State.LEADER:
-            print(data)
-        print("Received broadcast message:", data, addr)
+            res = json.loads(data)
+            # TODO look at intention
+            self._group_view[res["uuid"]] = (res["address"], res["port"])
+            self._tcp.send("hello", self._group_view[res["uuid"]])
+            print(f"{self._state}, {self._group_view}")
+            # TODO maybe start new election
+        else:
+            print("Received broadcast message:", data, addr)
 
     def run(self):
         while True:
