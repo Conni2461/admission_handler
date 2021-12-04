@@ -1,7 +1,7 @@
 Implementation:
 
 0. Project Structure
-1. Dynamic Discovery
+1. Dynamic Discovery <--
     1.1. Hosts
         1.1.1. Group View etc.
     1.2. Clients
