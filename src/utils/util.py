@@ -1,9 +1,14 @@
+import json
+import logging
 import socket
 import sys
-import logging
+import uuid
 
 
 def broadcast(port, broadcast_message):
+
+    broadcast_message["msg_uuid"] = str(uuid.uuid4())
+
     # Create a UDP socket
     broadcast_socket = socket.socket(
         socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
@@ -14,7 +19,7 @@ def broadcast(port, broadcast_message):
     else:
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    broadcast_socket.sendto(str.encode(broadcast_message), ("<broadcast>", port))
+    broadcast_socket.sendto(str.encode(json.dumps(broadcast_message)), ("<broadcast>", port))
     broadcast_socket.close()
 
 

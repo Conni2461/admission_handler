@@ -25,7 +25,12 @@ class Server:
         self._logger = logging.getLogger(f"Server {self._uuid}")
         self._logger.setLevel(logging.DEBUG)
 
-        dispatcher.connect(self._on_tcp_msg, signal=ON_TCP_MESSAGE)
+        dispatcher.connect(self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener)
+        dispatcher.connect(
+            self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._udp_listener
+        )
+
+        # TODO: check why we are receiving our own join request twice?
 
     def _request_join(self):
         mes = {
@@ -35,7 +40,8 @@ class Server:
             "port": self._tcp_listener.port,
         }
 
-        broadcast(BROADCAST_PORT, json.dumps(mes))
+        self._logger.debug("Requesting join.")
+        broadcast(BROADCAST_PORT, mes)
 
         for _ in range(MAX_TRIES):
             res, add = self._tcp_listener.listen()
@@ -50,33 +56,32 @@ class Server:
                 self._tcp_listener.port,
             )
 
-        self._logger.debug(f"{self._state}, {self._group_view}")
+        self._logger.debug(f"In Request Join: {self._state}, {self._group_view}")
         self._udp_listener.start()
-
-        dispatcher.connect(
-            self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._udp_listener
-        )
 
     def _on_udp_msg(self, data=None, addr=None):
         if self._state == State.LEADER:
-            res = json.loads(data)
-            if res["intention"] == IDENT_SERVER:
-                self._group_view[res["uuid"]] = (res["address"], res["port"])
-                self._tcp_listener.send("hello", self._group_view[res["uuid"]])
-                self._logger.debug(f"{self._state}, {self._group_view}")
+            if data["intention"] == IDENT_SERVER and data["uuid"] != self._uuid:
+                self._group_view[data["uuid"]] = (data["address"], data["port"])
+                self._tcp_listener.send(json.dumps({"intention": "wozzaaa"}), self._group_view[data["uuid"]])
+                self._logger.debug("Received server join request from {}".format((data["address"], data["port"])))
+
+                self._logger.debug("New group view is: {}".format(self._group_view))
 
                 self._distribute_group_view()
 
                 if self._election_required():
                     self._start_election()
 
-            elif res["intention"] == IDENT_CLIENT:
-                self._logger.debug(f"TODO: {res}")
+            elif data["intention"] == IDENT_CLIENT:
+                self._logger.debug(f"TODO: {data}")
             else:
                 # TODO: handle other broadcasts?
-                self._logger.debug("How did we get here?")
+                if (data["uuid"] != self._uuid):
+                    # TODO: maybe ignore udp msg uuids that we sent ourselves
+                    self._logger.debug(f"How did we get here?\n {data}")
         else:
-            self._logger.debug("Received broadcast message:", data, addr)
+            self._logger.debug(f"Received broadcast message: {data} from {addr}")
 
     def _start_election(self):
         pass

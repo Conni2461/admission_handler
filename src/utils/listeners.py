@@ -1,10 +1,13 @@
+import json
+import logging
 import socket
 import sys
+from collections import deque
 from threading import Thread
 
 from louie import dispatcher
 
-from .constants import BROADCAST_PORT, BUFFER_SIZE, TIMEOUT
+from .constants import BROADCAST_PORT, BUFFER_SIZE, MAX_MSG_BUFF_SIZE, TIMEOUT
 from .signals import ON_BROADCAST_MESSAGE, ON_TCP_MESSAGE
 
 
@@ -18,6 +21,10 @@ class TCPListener(Thread):
         self._port = socketname[1]
         self._socket.settimeout(timeout)
         self._open = True
+
+        self._logger = logging.getLogger(f"TCPListener")
+        self._logger.setLevel(logging.DEBUG)
+        self._logger.debug(f"Binding to addr: {':'.join(map(str, socketname))}")
 
     @property
     def port(self):
@@ -52,10 +59,11 @@ class TCPListener(Thread):
             self._socket.close()
 
     def run(self):
-        print("Listening to tcp messages")
+        self._logger.debug("Listening to tcp messages")
         while True:
             data, addr = self.listen()
             if data:
+                self._logger.debug(f"Received msg {data.decode()}")
                 dispatcher.send(
                     signal=ON_TCP_MESSAGE,
                     sender=self,
@@ -79,14 +87,28 @@ class UDPListener(Thread):
         # Bind socket to address and port
         self.listen_socket.bind(("", BROADCAST_PORT))
 
+        socketname = self.listen_socket.getsockname()
+
+        self._msg_buffer = deque([], maxlen=MAX_MSG_BUFF_SIZE)
+
+        self._logger = logging.getLogger(f"UDPListener")
+        self._logger.setLevel(logging.DEBUG)
+        self._logger.debug(f"Binding to addr: {':'.join(map(str, socketname))}")
+
     def run(self):
-        print("Listening to broadcast messages")
+        self._logger.debug("Listening to broadcast messages")
         while True:
             data, addr = self.listen_socket.recvfrom(BUFFER_SIZE)
             if data:
+                loaded_data = json.loads(data.decode())
+                if loaded_data.get("msg_uuid") in self._msg_buffer:
+                    continue
+                else:
+                    self._msg_buffer.append(loaded_data["msg_uuid"])
+                self._logger.debug(f"Received msg {data}")
                 dispatcher.send(
                     signal=ON_BROADCAST_MESSAGE,
                     sender=self,
-                    data=data.decode(),
+                    data=loaded_data,
                     addr=addr,
                 )
