@@ -1,0 +1,28 @@
+Feedback Others
+- Internet Problems
+tcp/udp are separate from our send, order etc. guarantees
+
+Edge Case: Two Servers become leaders because they do not hear from each other fast enough > did we think about this scenario (as in, even with waiting through the timeouts)?
+
+Heartbeats -> Fault Detection
+Then? -> Fault Tolerance
+	-> How many heartbeats can be missed/what's the timeout exactly?
+
+Generally: Be more deterministic/precise/algorithmic (not "when it misses TOO MANY heartbeats")
+
+Security is no concern of us
+Failure Handling is limited to Omission, Crashes, Byzantine
+
+SQL is fine, distributed database system is not
+--------------------------------------------------------------------------------
+Feedback Our Group
+
+number of arrivals is synchronized between servers?
+ -> wrong place in the text maybe?
+
+total ordering makes more sense than causal?
+  -> need to check our understanding of what means what exactly
+  
+block or roll back conflicts when accessing the same resource
+
+replication -> writing might be a problem (at least efficiency-wise), instead of for reading, optimize architecture for writing
