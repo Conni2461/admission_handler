@@ -1,13 +1,14 @@
 Implementation:
 
 0. Project Structure
-1. Dynamic Discovery 
+1. Dynamic Discovery
     1.1. Hosts
         1.1.1. Group View etc. <-- CURRENT
     1.2. Clients
 2. (Abstract) Client Logic <-- CURRENT
 
-3. Leader Election (Ring-Election?) <-- NEXT
+3.Build ring
+    3.1Leader Election (Ring-Election?) <-- NEXT
 
 4. Multicast
     4.1. Infrastructure
@@ -18,6 +19,7 @@ Implementation:
     5.1. Clients
     5.2. Hosts
         5.2.1. Leader
+        5.2.2. heartbeats
 
 Optional:
 6. Visualization

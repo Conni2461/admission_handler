@@ -9,7 +9,6 @@ args = parser.parse_args()
 if args.server:
     from .server.server import Server
     server = Server()
-    server.request_join()
     server.run()
 elif args.client:
     from .client.client import Client

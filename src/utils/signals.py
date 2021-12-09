@@ -1,3 +1,2 @@
-from random import randint
-
-ON_BROADCAST_MESSAGE = randint(0, 1000)
+ON_BROADCAST_MESSAGE = 0
+ON_TCP_MESSAGE = 1

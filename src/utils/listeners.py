@@ -4,12 +4,13 @@ from threading import Thread
 
 from louie import dispatcher
 
-from .constants import TIMEOUT, BUFFER_SIZE, BROADCAST_PORT
-from .signals import ON_BROADCAST_MESSAGE
+from .constants import BROADCAST_PORT, BUFFER_SIZE, TIMEOUT
+from .signals import ON_BROADCAST_MESSAGE, ON_TCP_MESSAGE
 
 
-class TCPListener:
+class TCPListener(Thread):
     def __init__(self, timeout=TIMEOUT):
+        super().__init__()
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.bind(("", 0))
         socketname = self._socket.getsockname()
@@ -49,6 +50,18 @@ class TCPListener:
         if self._open:
             self._open = False
             self._socket.close()
+
+    def run(self):
+        print("Listening to tcp messages")
+        while True:
+            data, addr = self.listen()
+            if data:
+                dispatcher.send(
+                    signal=ON_TCP_MESSAGE,
+                    sender=self,
+                    data=data.decode(),
+                    addr=addr,
+                )
 
 
 class UDPListener(Thread):

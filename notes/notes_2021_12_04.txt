@@ -10,3 +10,24 @@
 1.2 Niemand ist da
     -> leader (state [Leader, Member, Disconnected, ...], groupView[])
     -> start Listener on broadcast port
+
+
+Leader perspective:
+    1. Server requests join
+    2. Add server to group view
+    3. Send response to joining server
+    4. Rebuild Ring
+    5. Start Election
+
+
+Failures:
+    prerequisite: server_join_timeout > heartbeat_timeout
+    1. Leader fails
+    2. heartbeat is missed (heartbeat_timeout)
+    3. election is started
+        3.1. all servers are in state "election"
+    4. new server S0 requests join
+        4.1. first server to answer S1, tells S0 to wait (tcp)
+        4.2. when election is over, S1 lets S0 know that it can request join. If tcp connection fails, S0 will request join
+        4.3. S0 closes tcp connection, and restarts
+    5. S0 joins the group (through leader), new election is started after election_timeout
