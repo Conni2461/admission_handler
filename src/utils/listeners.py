@@ -1,14 +1,23 @@
+import uuid
 import json
 import logging
 import socket
+import struct
 import sys
 from collections import deque
 from threading import Thread
 
 from louie import dispatcher
 
-from .constants import BROADCAST_PORT, BUFFER_SIZE, MAX_MSG_BUFF_SIZE, TIMEOUT
-from .signals import ON_BROADCAST_MESSAGE, ON_TCP_MESSAGE
+from .constants import (
+    BROADCAST_PORT,
+    MULTICAST_IP,
+    MULTICAST_PORT,
+    BUFFER_SIZE,
+    MAX_MSG_BUFF_SIZE,
+    TIMEOUT,
+)
+from .signals import ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE
 
 
 class SocketThread(Thread):
@@ -154,3 +163,67 @@ class UDPListener(SocketThread):
             self.listen_socket.close()
         except:
             pass
+
+class ROMulticast(Thread):
+    def __init__(self, id):
+        super().__init__()
+        self._name = id
+        self._snumber = 1
+        self._rnumbers = {}
+        self._received = {}
+        self._holdback = []
+        self._socket = socket.socket(
+            socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
+        )
+        self._socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.bind((MULTICAST_IP, MULTICAST_PORT))
+        mreq = struct.pack("4sl", socket.inet_aton(MULTICAST_IP), socket.INADDR_ANY)
+        self._socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+        self._logger = logging.getLogger(f"ROMulticast")
+        self._logger.setLevel(logging.DEBUG)
+
+    def send(self, mesg: dict):
+        if "uuid" not in mesg:
+            mesg["uuid"] = str(uuid.uuid4())
+        if "sender" not in mesg:
+            mesg["sender"] = self._name
+        mesg["S"] = self._snumber
+        self._snumber += 1
+        self._socket.sendto(json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT))
+
+    def r_deliver(self, data):
+        self._logger.debug(f"Received msg {data}")
+        self._received[data["uuid"]] = data
+        if self._name != data["sender"]:
+            self.send(data)
+        dispatcher.send(
+            signal=ON_MULTICAST_MESSAGE,
+            sender=self,
+            data=data,
+        )
+
+    def request_missing(self, s, r):
+        self._logger.debug("Implement request missing")
+        pass
+
+    def run(self):
+        self._logger.debug("Listening to rom messages")
+        while True:
+            data = json.loads(self._socket.recv(BUFFER_SIZE).decode())
+            if data["uuid"] in self._received:
+                continue
+            if data["sender"] in self._rnumbers:
+                s = data["S"]
+                if s == self._rnumbers[data["sender"]] + 1:
+                    self._rnumbers[data["sender"]] += 1
+                    self.r_deliver(data)
+                elif s < self._rnumbers[data["sender"]] + 1:
+                    continue
+                else:
+                    self.request_missing(s, self._rnumbers[data["sender"]])
+            else:  # TODO remove this part, we dont need it because we add data["sender"] when it joins the group
+                self._rnumbers[data["sender"]] = data["S"]
+                self.r_deliver(data)
