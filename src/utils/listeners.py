@@ -11,10 +11,24 @@ from .constants import BROADCAST_PORT, BUFFER_SIZE, MAX_MSG_BUFF_SIZE, TIMEOUT
 from .signals import ON_BROADCAST_MESSAGE, ON_TCP_MESSAGE
 
 
-class TCPListener(Thread):
+class SocketThread(Thread):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+        self.stopped = False
+
+    def join(self):
+        self.stopped = True
+        super().join()
+
+    def start(self):
+        self.stopped = False
+        super().start()
+
+class TCPListener(SocketThread):
     def __init__(self, timeout=TIMEOUT):
         super().__init__()
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.bind(("", 0))
         socketname = self._socket.getsockname()
         self._address = socketname[0]
@@ -41,12 +55,25 @@ class TCPListener(Thread):
         self._socket.settimeout(value)
 
     def send(self, mesg, dest):
-        self._socket.sendto(mesg.encode(), dest)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(dest)
+            res = sock.send(mesg.encode())
+            sock.close()
 
-    def listen(self):
+        return res
+
+    def listen(self, timeout=None):
         try:
-            data, address = self._socket.recvfrom(BUFFER_SIZE)
-            return data, address
+            self._socket.listen()
+            conn, addr = self._socket.accept()
+            while True:
+                res = conn.recv(BUFFER_SIZE)
+                if res:
+                    data = res
+                    continue
+                else:
+                    break
+            return data, addr
         except socket.timeout:
             return None, None
 
@@ -60,7 +87,7 @@ class TCPListener(Thread):
 
     def run(self):
         self._logger.debug("Listening to tcp messages")
-        while True:
+        while not self.stopped:
             data, addr = self.listen()
             if data:
                 self._logger.debug(f"Received msg {data.decode()}")
@@ -71,8 +98,11 @@ class TCPListener(Thread):
                     addr=addr,
                 )
 
+        self._logger.debug("Shutting down.")
+        self.close()
 
-class UDPListener(Thread):
+
+class UDPListener(SocketThread):
     def __init__(self):
         super().__init__()
         self.listen_socket = socket.socket(
@@ -86,6 +116,8 @@ class UDPListener(Thread):
         self.listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         # Bind socket to address and port
         self.listen_socket.bind(("", BROADCAST_PORT))
+        self.listen_socket.settimeout(TIMEOUT)
+
 
         socketname = self.listen_socket.getsockname()
 
@@ -97,8 +129,11 @@ class UDPListener(Thread):
 
     def run(self):
         self._logger.debug("Listening to broadcast messages")
-        while True:
-            data, addr = self.listen_socket.recvfrom(BUFFER_SIZE)
+        while not self.stopped:
+            try:
+                data, addr = self.listen_socket.recvfrom(BUFFER_SIZE)
+            except socket.timeout:
+                continue
             if data:
                 loaded_data = json.loads(data.decode())
                 if loaded_data.get("msg_uuid") in self._msg_buffer:
@@ -112,3 +147,10 @@ class UDPListener(Thread):
                     data=loaded_data,
                     addr=addr,
                 )
+
+        self._logger.debug("Shutting down.")
+
+        try:
+            self.listen_socket.close()
+        except:
+            pass
