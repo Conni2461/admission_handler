@@ -5,6 +5,7 @@ BROADCAST_PORT = 5973
 CLIENT_BASE_PORT = 5980  # TODO: adjust as needed
 IDENT_SERVER = "IDServer"
 IDENT_CLIENT = "IDClient"
+SHUTDOWN_SERVER = "ShutdownServer"
 UPDATE_GROUP_VIEW = "UpdateGV"
 ELECTION_MESSAGE = "ElectionMessage"
 MAX_TRIES = 3

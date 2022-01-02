@@ -6,6 +6,7 @@ import uuid
 from louie import dispatcher
 
 from ..utils.constants import (ACCEPT_SERVER, BROADCAST_PORT, ELECTION_MESSAGE,
+                               IDENT_SERVER, MAX_TRIES, SHUTDOWN_SERVER,
 from ..utils.listeners import TCPListener, UDPListener
 from ..utils.signals import ON_BROADCAST_MESSAGE, ON_TCP_MESSAGE
 from ..utils.util import CircularList, CustomLogger, RepeatTimer, broadcast
@@ -196,11 +197,41 @@ class Server:
         elif res["intention"] == ELECTION_MESSAGE:
             self._logger.debug(f"Received Election Message from {res['mid']}")
             self._on_election_message(res)
+        elif res["intention"] == SHUTDOWN_SERVER:
+            self._group_view.pop(res["uuid"])
+            self._heartbeats.pop(res["uuid"])
+            self._logger.debug(f"Received shutdown message from sever {res['uuid']}. Removing from group view.")
+            self._distribute_group_view()
+    def _shut_down(self):
+        self._logger.info("Shutting down.")
+        leader_address = self._group_view.get(self._current_leader)
+
+        msg = {
+            "intention": SHUTDOWN_SERVER,
+            "uuid": f"{self._uuid}"
+        }
+
+        self._tcp_listener.join()
+        self._udp_listener.join()
+        self._heartbeat_timer.cancel()
+
+        if leader_address and self._current_leader != self._uuid:
+            self._tcp_listener.send(json.dumps(msg), leader_address)
+        else:
+            broadcast(BROADCAST_PORT, msg)
 
     def run(self):
 
         self._request_join()
         self._tcp_listener.start()
 
+        try:
         while True:
             pass
+        except KeyboardInterrupt:
+            self._logger.debug("Interrupted.")
+            self._shut_down()
+            try:
+                sys.exit(0)
+            except SystemExit:
+                os._exit(0)
