@@ -18,7 +18,14 @@ BUFFER_SIZE = 1024
 MAX_MSG_BUFF_SIZE = 50
 HEARTBEAT_TIMEOUT = 10 # seconds
 
+
 class State(Enum):
     PENDING = 0
     LEADER = 1
     MEMBER = 2
+
+
+class Purpose(Enum):
+    REAL_MSG = 0
+    PROP_SEQ = 1
+    FIN_SEQ = 2
