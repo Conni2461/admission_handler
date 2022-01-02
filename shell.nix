@@ -7,4 +7,7 @@ let
 in
 pkgs.mkShell {
   nativeBuildInputs = [ pythonWithPackages ];
+  shellHook = ''
+    exec zsh
+  '';
 }
