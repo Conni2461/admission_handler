@@ -3,6 +3,7 @@ import logging
 import socket
 import sys
 import uuid
+from threading import Timer
 
 
 def broadcast(port, broadcast_message):
@@ -41,3 +42,8 @@ class CircularList(list):
         else:
             self.i = 0
         return self[self.i]
+
+class RepeatTimer(Timer):
+    def run(self):
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)

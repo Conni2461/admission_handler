@@ -1,12 +1,16 @@
+import datetime
 import json
 import logging
-import socket
+import os
+import sys
 import uuid
 
 from louie import dispatcher
 
 from ..utils.constants import (ACCEPT_SERVER, BROADCAST_PORT, ELECTION_MESSAGE,
+                               HEARTBEAT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
                                IDENT_SERVER, MAX_TRIES, SHUTDOWN_SERVER,
+                               UPDATE_GROUP_VIEW, State)
 from ..utils.listeners import TCPListener, UDPListener
 from ..utils.signals import ON_BROADCAST_MESSAGE, ON_TCP_MESSAGE
 from ..utils.util import CircularList, CustomLogger, RepeatTimer, broadcast
@@ -26,6 +30,7 @@ class Server:
         self._logger.setLevel(logging.DEBUG)
         self._participating = False
         self._heartbeats = {}
+        self._heartbeat_timer = None
 
         dispatcher.connect(self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener)
         dispatcher.connect(
@@ -123,6 +128,34 @@ class Server:
             self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, self._send_heartbeat)
             self._heartbeat_timer.start()
 
+    def _send_heartbeat(self):
+        msg = {
+            "intention": HEARTBEAT,
+            "uuid": f"{self._uuid}"
+        }
+        self._tcp_listener.send(json.dumps(msg), self._group_view[self._current_leader])
+
+    def _check_heartbeats(self):
+        now = datetime.datetime.now().timestamp()
+        for uuid in self._group_view.keys():
+            if uuid == self._uuid:
+                continue
+            latest_beat = self._heartbeats.get(uuid)
+            if latest_beat:
+                diff = latest_beat - now
+                if diff > HEARTBEAT_TIMEOUT:
+                    self._logger.debug(f"Node {uuid} has timed out.")
+            else:
+                self._logger.debug(f"Node {uuid} does not appear to be in group view.")
+
+    def _on_received_heartbeat(self, data):
+        uuid = data["uuid"]
+        self._logger.debug(f"Recevied heartbeat from {uuid}.")
+        if uuid in self._group_view:
+            self._heartbeats[data["uuid"]] = datetime.datetime.now().timestamp()
+        else:
+            self._logger.warning(f"Received heartbeat from {uuid} who is not in group view.")
+
     def _send_election_message(self, message):
         prev_neighbor = None
         success = False
@@ -202,6 +235,9 @@ class Server:
             self._heartbeats.pop(res["uuid"])
             self._logger.debug(f"Received shutdown message from sever {res['uuid']}. Removing from group view.")
             self._distribute_group_view()
+        elif res["intention"] == HEARTBEAT:
+            self._on_received_heartbeat(res)
+
     def _shut_down(self):
         self._logger.info("Shutting down.")
         leader_address = self._group_view.get(self._current_leader)

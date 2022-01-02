@@ -8,9 +8,12 @@ IDENT_CLIENT = "IDClient"
 SHUTDOWN_SERVER = "ShutdownServer"
 UPDATE_GROUP_VIEW = "UpdateGV"
 ELECTION_MESSAGE = "ElectionMessage"
+HEARTBEAT = "Heartbeat"
+TIMEOUT = 0.1
 MAX_TRIES = 3
 BUFFER_SIZE = 1024
 MAX_MSG_BUFF_SIZE = 50
+HEARTBEAT_TIMEOUT = 10 # seconds
 
 class State(Enum):
     PENDING = 0
