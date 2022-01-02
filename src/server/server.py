@@ -37,8 +37,6 @@ class Server:
             self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._udp_listener
         )
 
-        # TODO: check why we are receiving our own join request twice?
-
     def _request_join(self):
         mes = {
             "intention": IDENT_SERVER,
@@ -51,13 +49,19 @@ class Server:
         broadcast(BROADCAST_PORT, mes)
 
         for _ in range(MAX_TRIES):
-            res, add = self._tcp_listener.listen()
+            res, add = self._tcp_listener.listen(1)
             if res is not None:
-                self._state = State.MEMBER
-                break
+                data = json.loads(res)
+                if data.get("intention") == ACCEPT_SERVER:
+                    self._state = State.MEMBER
+                    self._current_leader = data.get("leader")
+                    self._group_view = data.get("group_view")
+                    self._logger.debug(f"I have been accepted by leader {self._current_leader}. Group view has been populated.")
+                    self._set_leader(False)
+                    break
 
         if self._state == State.PENDING:
-            self._state = State.LEADER
+            self._set_leader()
             self._group_view[self._uuid] = (
                 self._tcp_listener.address,
                 self._tcp_listener.port,
@@ -70,11 +74,19 @@ class Server:
         if self._state == State.LEADER:
             if data["intention"] == IDENT_SERVER and data["uuid"] != self._uuid:
                 self._group_view[data["uuid"]] = (data["address"], data["port"])
-                self._tcp_listener.send(json.dumps({"intention": "wozzaaa"}), self._group_view[data["uuid"]])
+
+                welcome_msg = {
+                    "intention": ACCEPT_SERVER,
+                    "leader": f"{self._uuid}",
+                    "group_view": self._group_view
+                }
+
+                self._tcp_listener.send(json.dumps(welcome_msg), self._group_view[data["uuid"]])
                 self._logger.debug("Received server join request from {}".format((data["address"], data["port"])))
 
                 self._logger.debug("New group view is: {}".format(self._group_view))
 
+                self._logger.debug("Distributing group view.")
                 self._distribute_group_view()
 
                 self._logger.debug("Checking election required.")
@@ -220,12 +232,18 @@ class Server:
                     "intention": UPDATE_GROUP_VIEW,
                     "group_view": self._group_view
                 }
-                self._tcp_listener.send(json.dumps(data), address)
+                try:
+                    self._tcp_listener.send(json.dumps(data), address)
+                except ConnectionRefusedError as e:
+                    self._logger.warning(e)
 
     def _on_tcp_msg(self, data=None, addr=None):
         res = json.loads(data)
         if res["intention"] == UPDATE_GROUP_VIEW:
-            self._group_view = res["group_view"]
+            group_view = {}
+            for key, value in res["group_view"].items():
+                group_view[key] = tuple(value)
+            self._group_view = group_view
             self._logger.debug(f"Received updated group view with {len(list(self._group_view.keys()))} items.")
         elif res["intention"] == ELECTION_MESSAGE:
             self._logger.debug(f"Received Election Message from {res['mid']}")
@@ -262,8 +280,8 @@ class Server:
         self._tcp_listener.start()
 
         try:
-        while True:
-            pass
+            while True:
+                pass
         except KeyboardInterrupt:
             self._logger.debug("Interrupted.")
             self._shut_down()

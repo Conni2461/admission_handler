@@ -7,6 +7,7 @@ IDENT_SERVER = "IDServer"
 IDENT_CLIENT = "IDClient"
 SHUTDOWN_SERVER = "ShutdownServer"
 UPDATE_GROUP_VIEW = "UpdateGV"
+ACCEPT_SERVER = "AcceptServer"
 ELECTION_MESSAGE = "ElectionMessage"
 HEARTBEAT = "Heartbeat"
 TIMEOUT = 0.1
