@@ -184,7 +184,7 @@ class Server:
                 self._logger.warning(e)
 
     def _on_election_message(self, data):
-
+        self._logger.debug(f"Received Election Message from {data['mid']}")
         neighbor = self._get_neighbor()
 
         if data["is_leader"]:
@@ -237,16 +237,18 @@ class Server:
                 except ConnectionRefusedError as e:
                     self._logger.warning(e)
 
+    def _on_received_grp_view(self, data):
+        group_view = {}
+        for key, value in data["group_view"].items():
+            group_view[key] = tuple(value)
+        self._group_view = group_view
+        self._logger.debug(f"Received updated group view with {len(list(self._group_view.keys()))} items.")
+
     def _on_tcp_msg(self, data=None, addr=None):
         res = json.loads(data)
         if res["intention"] == UPDATE_GROUP_VIEW:
-            group_view = {}
-            for key, value in res["group_view"].items():
-                group_view[key] = tuple(value)
-            self._group_view = group_view
-            self._logger.debug(f"Received updated group view with {len(list(self._group_view.keys()))} items.")
+            self._on_received_grp_view(res)
         elif res["intention"] == ELECTION_MESSAGE:
-            self._logger.debug(f"Received Election Message from {res['mid']}")
             self._on_election_message(res)
         elif res["intention"] == SHUTDOWN_SERVER:
             self._group_view.pop(res["uuid"])
