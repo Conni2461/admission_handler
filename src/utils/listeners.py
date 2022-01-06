@@ -35,6 +35,7 @@ class SocketThread(Thread):
         self.stopped = False
         super().start()
 
+
 class TCPListener(SocketThread):
     def __init__(self, timeout=TIMEOUT):
         super().__init__()
@@ -128,7 +129,6 @@ class UDPListener(SocketThread):
         self.listen_socket.bind(("", BROADCAST_PORT))
         self.listen_socket.settimeout(TIMEOUT)
 
-
         socketname = self.listen_socket.getsockname()
 
         self._msg_buffer = deque([], maxlen=MAX_MSG_BUFF_SIZE)
@@ -165,14 +165,13 @@ class UDPListener(SocketThread):
         except:
             pass
 
+
 class ROMulticast(SocketThread):
     def __init__(self, id):
         super().__init__()
         self._name = id
         self._snumber = 0
-        self._rnumbers = {
-            self._name: self._snumber
-        }
+        self._rnumbers = {self._name: self._snumber}
         self._received = {}
 
         self._out = {}
@@ -235,7 +234,7 @@ class ROMulticast(SocketThread):
             "pq": pq,
             "i": str(uuid.uuid4()),
             "S": self._snumber,
-            "sender": self._name
+            "sender": self._name,
         }
         self._socket.sendto(json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT))
 
@@ -255,7 +254,7 @@ class ROMulticast(SocketThread):
             "a": a,
             "i": str(uuid.uuid4()),
             "S": self._snumber,
-            "sender": self._name
+            "sender": self._name,
         }
         self._socket.sendto(json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT))
 
@@ -279,7 +278,9 @@ class ROMulticast(SocketThread):
             if i not in self._holdback:
                 if i in self._received:
                     return
-                self._logger.error(f"Something went wrong with putting messages in holdback: {i}")
+                self._logger.error(
+                    f"Something went wrong with putting messages in holdback: {i}"
+                )
             else:
                 mesg = self._holdback.pop(i)
                 del mesg["pq"]
@@ -292,7 +293,9 @@ class ROMulticast(SocketThread):
 
     # TODO implement _request_missing
     def _request_missing(self, data, s, r):
-        self._logger.debug(f"WHY: s: {s}, r: {r}, sender: {data['sender']}, hb: {self._holdback}")
+        self._logger.debug(
+            f"WHY: s: {s}, r: {r}, sender: {data['sender']}, hb: {self._holdback}"
+        )
 
         self._holdback[data["i"]] = data
         pass
@@ -313,7 +316,7 @@ class ROMulticast(SocketThread):
             # Reliable Multicast
             if data["i"] not in self._received:
                 self._received[data["i"]] = data
-                if self._name != data["sender"]: # if (q != p) then B-multicast(m)
+                if self._name != data["sender"]:  # if (q != p) then B-multicast(m)
                     self.send(data)
 
                 # Basic Delivery
@@ -332,10 +335,14 @@ class ROMulticast(SocketThread):
                     else:
                         self._logger.error(f"Bad message {data}")
                 elif data["S"] <= self._rnumbers[data["sender"]]:
-                    self._logger.debug(f"skipping message {data['i']} from {data['sender']} with {data['S']} and {self._rnumbers}")
+                    self._logger.debug(
+                        f"skipping message {data['i']} from {data['sender']} with {data['S']} and {self._rnumbers}"
+                    )
                     continue
                 else:
-                    self._logger.debug(f"WHY: s: {data['S']}, r: {self._rnumbers[data['sender']]}, sender: {data['sender']}, hb: {self._holdback}")
+                    self._logger.debug(
+                        f"WHY: s: {data['S']}, r: {self._rnumbers[data['sender']]}, sender: {data['sender']}, hb: {self._holdback}"
+                    )
             else:
                 self._logger.debug("ALREADY RECEIVED")
         self._logger.debug("Shutting down.")

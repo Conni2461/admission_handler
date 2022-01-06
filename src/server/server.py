@@ -7,10 +7,19 @@ import uuid
 
 from louie import dispatcher
 
-from ..utils.constants import (ACCEPT_SERVER, BROADCAST_PORT, ELECTION_MESSAGE,
-                               HEARTBEAT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
-                               IDENT_SERVER, MAX_TRIES, SHUTDOWN_SERVER,
-                               UPDATE_GROUP_VIEW, State)
+from ..utils.constants import (
+    ACCEPT_SERVER,
+    BROADCAST_PORT,
+    ELECTION_MESSAGE,
+    HEARTBEAT,
+    HEARTBEAT_TIMEOUT,
+    IDENT_CLIENT,
+    IDENT_SERVER,
+    MAX_TRIES,
+    SHUTDOWN_SERVER,
+    UPDATE_GROUP_VIEW,
+    State,
+)
 from ..utils.listeners import TCPListener, UDPListener, ROMulticast
 from ..utils.signals import ON_BROADCAST_MESSAGE, ON_TCP_MESSAGE, ON_MULTICAST_MESSAGE
 from ..utils.util import CircularList, CustomLogger, RepeatTimer, broadcast
@@ -33,11 +42,15 @@ class Server:
         self._heartbeats = {}
         self._heartbeat_timer = None
 
-        dispatcher.connect(self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener)
+        dispatcher.connect(
+            self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener
+        )
         dispatcher.connect(
             self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._udp_listener
         )
-        dispatcher.connect(self._on_rom_msg, signal=ON_MULTICAST_MESSAGE, sender=self._rom_listener)
+        dispatcher.connect(
+            self._on_rom_msg, signal=ON_MULTICAST_MESSAGE, sender=self._rom_listener
+        )
 
     def _request_join(self):
         mes = {
@@ -58,13 +71,17 @@ class Server:
                     self._state = State.MEMBER
                     self._current_leader = data.get("leader")
                     self._group_view = data.get("group_view")
-                    self._logger.debug(f"I have been accepted by leader {self._current_leader}. Group view has been populated.")
+                    self._logger.debug(
+                        f"I have been accepted by leader {self._current_leader}. Group view has been populated."
+                    )
                     self._set_leader(False)
                     self._rom_listener.set_r_list(json.loads(data.get("rnumbers")))
                     break
 
         if self._state == State.PENDING:
-            self._logger.debug("Looks like there is no leader, declaring myself leader.")
+            self._logger.debug(
+                "Looks like there is no leader, declaring myself leader."
+            )
             self._set_leader()
             self._group_view[self._uuid] = (
                 self._tcp_listener.address,
@@ -87,8 +104,14 @@ class Server:
                 }
 
                 self._rom_listener.register_new_member(data["uuid"])
-                self._tcp_listener.send(json.dumps(welcome_msg), self._group_view[data["uuid"]])
-                self._logger.debug("Received server join request from {}".format((data["address"], data["port"])))
+                self._tcp_listener.send(
+                    json.dumps(welcome_msg), self._group_view[data["uuid"]]
+                )
+                self._logger.debug(
+                    "Received server join request from {}".format(
+                        (data["address"], data["port"])
+                    )
+                )
 
                 self._logger.debug("New group view is: {}".format(self._group_view))
 
@@ -106,7 +129,7 @@ class Server:
                 self._logger.debug(f"TODO: {data}")
             else:
                 # TODO: handle other broadcasts?
-                if (data["uuid"] != self._uuid):
+                if data["uuid"] != self._uuid:
                     # TODO: maybe ignore udp msg uuids that we sent ourselves
                     self._logger.debug(f"How did we get here?\n {data}")
         else:
@@ -117,7 +140,7 @@ class Server:
         election_msg = {
             "intention": ELECTION_MESSAGE,
             "mid": self._uuid,
-            "is_leader": False
+            "is_leader": False,
         }
         self._logger.debug(f"Starting election, sending election message to {neighbor}")
         self._send_election_message(json.dumps(election_msg))
@@ -131,14 +154,18 @@ class Server:
         return ring.next(idx)
 
     def _get_ring(self):
-        return CircularList(sorted([member for member in self._group_view.keys()], reverse=True))
+        return CircularList(
+            sorted([member for member in self._group_view.keys()], reverse=True)
+        )
 
     def _set_leader(self, state=True):
         if state:
             self._state = State.LEADER
             if self._heartbeat_timer is not None:
                 self._heartbeat_timer.cancel()
-            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT + 5, self._check_heartbeats)
+            self._heartbeat_timer = RepeatTimer(
+                HEARTBEAT_TIMEOUT + 5, self._check_heartbeats
+            )
             self._heartbeat_timer.start()
         else:
             if self._heartbeat_timer is not None:
@@ -147,16 +174,15 @@ class Server:
             self._heartbeat_timer.start()
 
     def _send_heartbeat(self):
-        msg = {
-            "intention": HEARTBEAT,
-            "uuid": f"{self._uuid}"
-        }
+        msg = {"intention": HEARTBEAT, "uuid": f"{self._uuid}"}
         try:
-            self._tcp_listener.send(json.dumps(msg), self._group_view[self._current_leader])
+            self._tcp_listener.send(
+                json.dumps(msg), self._group_view[self._current_leader]
+            )
         except ConnectionRefusedError:
             self._logger.warning("Leader seems to be offline, starting new election.")
             self._start_election()
-        
+
     def _check_heartbeats(self):
         now = datetime.datetime.now().timestamp()
         for uuid in self._group_view.keys():
@@ -176,7 +202,9 @@ class Server:
         if uuid in self._group_view:
             self._heartbeats[data["uuid"]] = datetime.datetime.now().timestamp()
         else:
-            self._logger.warning(f"Received heartbeat from {uuid} who is not in group view.")
+            self._logger.warning(
+                f"Received heartbeat from {uuid} who is not in group view."
+            )
 
     def _send_election_message(self, message):
         prev_neighbor = None
@@ -184,7 +212,9 @@ class Server:
         while not success:
             neighbor = self._get_neighbor(prev_neighbor)
             if neighbor == self._uuid:
-                self._logger.error("Could not find any available neighbors. Setting self to leader.")
+                self._logger.error(
+                    "Could not find any available neighbors. Setting self to leader."
+                )
                 self._set_leader(True)
                 success = True
             prev_neighbor = neighbor
@@ -199,7 +229,9 @@ class Server:
         neighbor = self._get_neighbor()
 
         if data["is_leader"]:
-            self._logger.debug(f"Message is a leader message, setting {data['mid']} to leader.")
+            self._logger.debug(
+                f"Message is a leader message, setting {data['mid']} to leader."
+            )
             self._current_leader = data["mid"]
 
             if self._participating:
@@ -211,7 +243,9 @@ class Server:
                 self._send_election_message(json.dumps(data))
             else:
                 self._set_leader()
-                self._logger.debug("Received my own leader message, will terminate the election.")
+                self._logger.debug(
+                    "Received my own leader message, will terminate the election."
+                )
             return
 
         if data["mid"] < self._uuid and not self._participating:
@@ -224,12 +258,16 @@ class Server:
             self._send_election_message(json.dumps(data))
 
         elif data["mid"] > self._uuid:
-            self._logger.debug(f"UUID is smaller than previous neighbor, relaying message to {neighbor}.")
+            self._logger.debug(
+                f"UUID is smaller than previous neighbor, relaying message to {neighbor}."
+            )
             self._participating = True
             self._send_election_message(json.dumps(data))
 
         elif data["mid"] == self._uuid:
-            self._logger.debug(f"Received my own election message, declaring myself leader and sending leader message to {neighbor}")
+            self._logger.debug(
+                f"Received my own election message, declaring myself leader and sending leader message to {neighbor}"
+            )
             self._current_leader = self._uuid
             data["mid"] = self._uuid
             data["is_leader"] = True
@@ -239,10 +277,7 @@ class Server:
     def _distribute_group_view(self):
         for uuid, address in self._group_view.items():
             if uuid != self._uuid:
-                data = {
-                    "intention": UPDATE_GROUP_VIEW,
-                    "group_view": self._group_view
-                }
+                data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
                 try:
                     self._tcp_listener.send(json.dumps(data), address)
                 except ConnectionRefusedError as e:
@@ -255,7 +290,9 @@ class Server:
         for new_member in set(group_view.keys()) - set(self._group_view.keys()):
             self._rom_listener.register_new_member(new_member)
         self._group_view = group_view
-        self._logger.debug(f"Received updated group view with {len(list(self._group_view.keys()))} items.")
+        self._logger.debug(
+            f"Received updated group view with {len(list(self._group_view.keys()))} items."
+        )
 
     def _on_tcp_msg(self, data=None, addr=None):
         res = json.loads(data)
@@ -266,11 +303,13 @@ class Server:
         elif res["intention"] == SHUTDOWN_SERVER:
             self._group_view.pop(res["uuid"])
             self._heartbeats.pop(res["uuid"])
-            self._logger.debug(f"Received shutdown message from sever {res['uuid']}. Removing from group view.")
+            self._logger.debug(
+                f"Received shutdown message from sever {res['uuid']}. Removing from group view."
+            )
             self._distribute_group_view()
         elif res["intention"] == HEARTBEAT:
             self._on_received_heartbeat(res)
-        
+
     def _on_rom_msg(self, data=None):
         self._logger.debug(f"TODO: Do something with rom message: {data}")
 
@@ -278,10 +317,7 @@ class Server:
         self._logger.info("Shutting down.")
         leader_address = self._group_view.get(self._current_leader)
 
-        msg = {
-            "intention": SHUTDOWN_SERVER,
-            "uuid": f"{self._uuid}"
-        }
+        msg = {"intention": SHUTDOWN_SERVER, "uuid": f"{self._uuid}"}
 
         self._tcp_listener.join()
         self._udp_listener.join()
