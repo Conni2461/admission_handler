@@ -4,6 +4,7 @@ import logging
 import socket
 import struct
 import sys
+import copy
 from collections import deque
 from threading import Thread
 
@@ -173,10 +174,11 @@ class ROMulticast(SocketThread):
         self._snumber = 0
         self._rnumbers = {self._name: self._snumber}
         self._received = {}
+        self._holdback = {}
 
         self._out = {}
         self._out_a = {}
-        self._holdback = {}
+        self._deliver_queue = {}
 
         self._aq = 0  # Largest agreed seqeunce number
         self._pq = 0  # Largest proposed sequence number
@@ -195,13 +197,17 @@ class ROMulticast(SocketThread):
         self._logger = logging.getLogger(f"ROMulticast")
         self._logger.setLevel(logging.DEBUG)
 
-    # TODO call this
     def register_new_member(self, id):
         self._rnumbers[id] = 0
 
     def set_r_list(self, rnumbers):
         self._rnumbers.update(rnumbers)
-        self._logger.debug(f"new rnumbers: {self._rnumbers}")
+
+    def _send(self, mesg: dict):
+        mesg["sender"] = self._name
+        self._snumber += 1
+        mesg["S"] = self._snumber
+        self._socket.sendto(json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT))
 
     def send(self, mesg: dict):
         # Inject purpose
@@ -220,25 +226,23 @@ class ROMulticast(SocketThread):
             self._out[mesg["i"]] = mesg
             self._out_a[mesg["i"]] = []
 
-        mesg["sender"] = self._name
-        self._snumber += 1
-        mesg["S"] = self._snumber
-        self._socket.sendto(json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT))
+        self._send(mesg)
 
-    def _answer(self, i, r, pq):
-        self._snumber += 1
+    def _propose_order(self, data):
+        self._pq = max(self._aq, self._pq) + 1
+        data["pq"] = self._pq
+        self._deliver_queue[data["i"]] = data
+        # TODO Maybe this answer should be tcp rather than a multicast
         mesg = {
             "purpose": str(Purpose.PROP_SEQ),
-            "r": r,
-            "mesg_id": i,
-            "pq": pq,
+            "mesg_id": data["i"],
+            "r": data["original"],
+            "pq": data["pq"],
             "i": str(uuid.uuid4()),
-            "S": self._snumber,
-            "sender": self._name,
         }
-        self._socket.sendto(json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT))
+        self._send(mesg)
 
-    def _collect(self, data):
+    def _collect_order_proposals(self, data):
         if data["r"] != self._name:
             return
         i = data["mesg_id"]
@@ -247,43 +251,26 @@ class ROMulticast(SocketThread):
         if len(self._out_a[i]) != len(self._rnumbers):
             return
         a = max(self._out_a[i])
-        self._snumber += 1
         mesg = {
             "purpose": str(Purpose.FIN_SEQ),
             "mesg_id": i,
             "a": a,
             "i": str(uuid.uuid4()),
-            "S": self._snumber,
-            "sender": self._name,
         }
-        self._socket.sendto(json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT))
+        self._send(mesg)
 
-    def _process(self, data):
-        # self._logger.debug(f"Received msg {data}")
-        self._pq = max(self._aq, self._pq) + 1
-        data["pq"] = self._pq
-        self._holdback[data["i"]] = data
-        # TODO Maybe this answer should be tcp rather than a multicast
-        self._answer(data["i"], data["original"], data["pq"])
-
-    def _deliver(self, data):
+    def _deliver_message(self, data):
         i = data["mesg_id"]
         a = data["a"]
         self._aq = max(self._aq, a)
-        mesg = None
-        print(self._holdback)
-        if i in self._out:
-            mesg = self._out[i]
-        else:
-            if i not in self._holdback:
-                if i in self._received:
-                    return
+        if i not in self._deliver_queue:
+            if i not in self._received:
                 self._logger.error(
-                    f"Something went wrong with putting messages in holdback: {i}"
+                    "Something went wrong with putting the message into the _deliver_queue"
                 )
-            else:
-                mesg = self._holdback.pop(i)
-                del mesg["pq"]
+            return
+        mesg = self._deliver_queue.pop(i)
+        del mesg["pq"]
         mesg["a"] = a
         dispatcher.send(
             signal=ON_MULTICAST_MESSAGE,
@@ -291,60 +278,90 @@ class ROMulticast(SocketThread):
             data=mesg,
         )
 
+    def _process_message(self, data):
+        self._rnumbers[data["sender"]] += 1
+
+        if data["purpose"] == str(Purpose.REAL_MSG):
+            self._propose_order(data)
+        elif data["purpose"] == str(Purpose.PROP_SEQ):
+            self._collect_order_proposals(data)
+        elif data["purpose"] == str(Purpose.FIN_SEQ):
+            self._deliver_message(data)
+        else:
+            self._logger.error(f"Bad message {data}")
+
+    def _check_for_next_msg(self, s, sender):
+        found = None
+        for id, msg in self._holdback.items():
+            if msg["S"] == s and msg["sender"] == sender:
+                found = id
+                break
+        if found != None:
+            print("found a message")
+            return self._holdback.pop(found)
+        return None
+
     # TODO implement _request_missing
     def _request_missing(self, data, s, r):
-        self._logger.debug(
-            f"WHY: s: {s}, r: {r}, sender: {data['sender']}, hb: {self._holdback}"
-        )
-
         self._holdback[data["i"]] = data
-        pass
+        sender = data["sender"]
+        r_i = r + 1
+        while r_i < s:
+            # Check if we have the message already in the holdback queue. If we
+            # have, take it out and deliver it
+            msg = self._check_for_next_msg(r_i, sender)
+            if msg != None:
+                self._process_message(msg)
+                r_i += 1
+            else:
+                break
+        self._logger.debug(f"nack: {list(range(r_i, s))}")
+        # TODO nack r_i to s
 
     def run(self):
-        self._logger.debug("Listening to rom messages")
+        self._logger.debug(f"Listening to rom messages {self._name}")
         while not self.stopped:
             try:
                 data = json.loads(self._socket.recv(BUFFER_SIZE).decode())
             except socket.timeout:
                 continue
 
-            if data["sender"] not in self._rnumbers:
-                self._logger.error(f"Don't know rnumer {data['sender']}")
-                continue
+            sender = data["sender"]
+            id = data["i"]
+            if sender not in self._rnumbers:
+                self._rnumbers[sender] = 0
+                # self._logger.error(f"Don't know rnumer {data['sender']}")
+                # continue
 
-            self._logger.debug(f"new message: {data}")
             # Reliable Multicast
-            if data["i"] not in self._received:
-                self._received[data["i"]] = data
-                if self._name != data["sender"]:  # if (q != p) then B-multicast(m)
-                    self.send(data)
+            if id not in self._received:
+                self._received[id] = data
+                if self._name != sender:  # if (q != p) then B-multicast(m)
+                    # Yeah we need end to end communication with answer
+                    if "r" in data and data["r"] != self.name:
+                        # We changed the data because we changed the sender
+                        # which fucked up everything below. So deepcopy ftw
+                        # Its not like it cost me 4 hours
+                        self.send(copy.deepcopy(data))
 
                 # Basic Delivery
-                if data["S"] == self._rnumbers[data["sender"]] + 1:
-                    self._rnumbers[data["sender"]] += 1
-
-                    if data["purpose"] == str(Purpose.REAL_MSG):
-                        self._logger.debug("PROCESS")
-                        self._process(data)
-                    elif data["purpose"] == str(Purpose.PROP_SEQ):
-                        self._logger.debug("COLLECT")
-                        self._collect(data)
-                    elif data["purpose"] == str(Purpose.FIN_SEQ):
-                        self._logger.debug("DELIVER")
-                        self._deliver(data)
-                    else:
-                        self._logger.error(f"Bad message {data}")
-                elif data["S"] <= self._rnumbers[data["sender"]]:
+                s = data["S"]
+                if s == self._rnumbers[sender] + 1:
+                    self._process_message(data)
+                    s += 1
+                    next_msg = self._check_for_next_msg(s, sender)
+                    while next_msg != None:
+                        self._process_message(next_msg)
+                        s += 1
+                        next_msg = self._check_for_next_msg(s, sender)
+                elif s <= self._rnumbers[sender]:
                     self._logger.debug(
-                        f"skipping message {data['i']} from {data['sender']} with {data['S']} and {self._rnumbers}"
+                        f"skipping message {id} from {sender} with {s} and {self._rnumbers}"
                     )
                     continue
                 else:
-                    self._logger.debug(
-                        f"WHY: s: {data['S']}, r: {self._rnumbers[data['sender']]}, sender: {data['sender']}, hb: {self._holdback}"
-                    )
-            else:
-                self._logger.debug("ALREADY RECEIVED")
+                    self._request_missing(data, s, self._rnumbers[sender])
+
         self._logger.debug("Shutting down.")
 
         try:
