@@ -3,6 +3,7 @@ import logging
 import socket
 import sys
 import uuid
+from threading import Timer
 
 
 def broadcast(port, broadcast_message):
@@ -27,3 +28,22 @@ class CustomLogger(logging.getLoggerClass()):
     def __init__(self, name, level=logging.INFO):
         super().__init__(name)
         self.setLevel(level)
+
+class CircularList(list):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.i = 0
+
+    def next(self, index=None):
+        if index is not None:
+            self.i = index
+        if (self.i + 1) <= (len(self) - 1):
+            self.i += 1
+        else:
+            self.i = 0
+        return self[self.i]
+
+class RepeatTimer(Timer):
+    def run(self):
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)
