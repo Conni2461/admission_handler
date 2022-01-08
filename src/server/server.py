@@ -181,8 +181,11 @@ class Server:
             except ConnectionRefusedError:
                 self._logger.warning("Leader seems to be offline, starting new election.")
                 self._start_election()
+        else:
+            self._logger.debug("Not sending heartbeat because I am participating in an election.")
 
     def _check_heartbeats(self):
+        self._logger.debug("Checking heartbeats.")
         now = datetime.datetime.now().timestamp()
         remove = []
         for uuid in self._group_view.keys():
@@ -227,7 +230,7 @@ class Server:
                 )
                 self._on_election_message(message)
                 success = True
-                break
+                continue
             prev_neighbor = neighbor
             try:
                 self._tcp_listener.send(json.dumps(message), self._group_view[neighbor])
