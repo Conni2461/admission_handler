@@ -176,9 +176,9 @@ class ROMulticast(SocketThread):
         self._rnumbers = {self._name: self._snumber}
         self._current_group_view = view
         self._received = {}
-        self._holdback = {}
+        self._holdback = {} # { id = { data: data, addr: addr } } dict
 
-        self._out = {}
+        self._out = {} # { snumber: msg, ... } dict
         self._out_a = {}
         self._group_view_backlog = {}
         self._deliver_queue = {}
@@ -227,7 +227,7 @@ class ROMulticast(SocketThread):
         self._snumber += 1
         mesg["S"] = self._snumber
 
-        self._out[mesg["id"]] = mesg
+        self._out[self._snumber] = mesg
         self._sender_socket.sendto(
             json.dumps(mesg).encode(), (MULTICAST_IP, MULTICAST_PORT)
         )
@@ -241,9 +241,6 @@ class ROMulticast(SocketThread):
         if "id" not in mesg:
             mesg["id"] = str(uuid.uuid4())
 
-        # Sender is not part of message if it wasnt send yet,
-        # so this means this is the original sender of the message
-        # So we also place this message in `self._out`
         if "sender" not in mesg:
             mesg["original"] = self._name
             self._out_a[mesg["id"]] = {}
@@ -365,13 +362,8 @@ class ROMulticast(SocketThread):
             return
         elif data["purpose"] == str(Purpose.NACK):
             for nack in data["nacks"]:
-                # Iterating over all thoes messages sucks. We need a better way
-                # to store the out messages.
-                # Check `S = data` would work
-                for out_messages in self._out.values():
-                    if out_messages["data"]["S"] == nack:
-                        self._sender_socket.send(out_messages, addr)
-                        break
+                if nack in self._out:
+                    self._sender_socket.send(self._out[nack], addr)
             return
 
         sender = data["sender"]
