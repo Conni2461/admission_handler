@@ -29,3 +29,4 @@ class Purpose(Enum):
     REAL_MSG = 0
     PROP_SEQ = 1
     FIN_SEQ = 2
+    NACK = 3
