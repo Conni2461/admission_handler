@@ -17,7 +17,7 @@ MAX_TRIES = 3
 BUFFER_SIZE = 1024
 MAX_MSG_BUFF_SIZE = 50
 HEARTBEAT_TIMEOUT = 10  # seconds
-
+MAX_TIMEOUTS = 2
 
 class State(Enum):
     PENDING = 0

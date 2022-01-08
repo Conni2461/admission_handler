@@ -7,21 +7,13 @@ import uuid
 
 from louie import dispatcher
 
-from ..utils.constants import (
-    ACCEPT_SERVER,
-    BROADCAST_PORT,
-    ELECTION_MESSAGE,
-    HEARTBEAT,
-    HEARTBEAT_TIMEOUT,
-    IDENT_CLIENT,
-    IDENT_SERVER,
-    MAX_TRIES,
-    SHUTDOWN_SERVER,
-    UPDATE_GROUP_VIEW,
-    State,
-)
+from ..utils.constants import (ACCEPT_SERVER, BROADCAST_PORT, ELECTION_MESSAGE,
+                               HEARTBEAT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
+                               IDENT_SERVER, MAX_TIMEOUTS, MAX_TRIES,
+                               SHUTDOWN_SERVER, UPDATE_GROUP_VIEW, State)
 from ..utils.listeners import ROMulticast, TCPListener, UDPListener
-from ..utils.signals import ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE
+from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
+                             ON_TCP_MESSAGE)
 from ..utils.util import CircularList, CustomLogger, RepeatTimer, broadcast
 
 logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.DEBUG)
@@ -209,11 +201,11 @@ class Server:
                 continue
             latest_beat = self._heartbeats.get(uuid, {}).get("ts")
             if latest_beat:
-                diff = latest_beat - now
+                diff = now - latest_beat
                 if diff > HEARTBEAT_TIMEOUT:
                     self._logger.debug(f"Node {uuid} has timed out.")
                     self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
-                    if self._heartbeats[uuid]["strikes"] >= 2:
+                    if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
                         self._logger.debug(f"Node {uuid} has timed out twice in a row. Removing.")
                         remove.append(uuid)
             else:
@@ -225,7 +217,7 @@ class Server:
         if remove:
             for uid in remove:
                 self._group_view.pop(uid)
-                self._heartbeats.pop(uuid)
+                self._heartbeats.pop(uid)
             self._distribute_group_view()
 
     def _on_received_heartbeat(self, data):
