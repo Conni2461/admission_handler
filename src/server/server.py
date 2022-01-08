@@ -7,13 +7,21 @@ import uuid
 
 from louie import dispatcher
 
-from ..utils.constants import (ACCEPT_SERVER, BROADCAST_PORT, ELECTION_MESSAGE,
-                               HEARTBEAT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
-                               IDENT_SERVER, MAX_TRIES, SHUTDOWN_SERVER,
-                               UPDATE_GROUP_VIEW, State)
+from ..utils.constants import (
+    ACCEPT_SERVER,
+    BROADCAST_PORT,
+    ELECTION_MESSAGE,
+    HEARTBEAT,
+    HEARTBEAT_TIMEOUT,
+    IDENT_CLIENT,
+    IDENT_SERVER,
+    MAX_TRIES,
+    SHUTDOWN_SERVER,
+    UPDATE_GROUP_VIEW,
+    State,
+)
 from ..utils.listeners import ROMulticast, TCPListener, UDPListener
-from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
-                             ON_TCP_MESSAGE)
+from ..utils.signals import ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE
 from ..utils.util import CircularList, CustomLogger, RepeatTimer, broadcast
 
 logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.DEBUG)
@@ -25,8 +33,8 @@ class Server:
         self._tcp_listener = TCPListener()
         self._udp_listener = UDPListener()
         self._uuid = str(uuid.uuid4())
-        self._rom_listener = ROMulticast(str(self._uuid))
         self._group_view = dict()
+        self._rom_listener = ROMulticast(str(self._uuid), self._group_view)
         self._current_leader = None
         self._logger = logging.getLogger(f"Server {self._uuid}")
         self._logger.setLevel(logging.DEBUG)
@@ -67,7 +75,10 @@ class Server:
                         f"I have been accepted by leader {self._current_leader}. Group view has been populated."
                     )
                     self._set_leader(False)
-                    self._rom_listener.set_r_list(json.loads(data.get("rnumbers")))
+                    self._rom_listener.sync_state(
+                        json.loads(data.get("rnumbers")),
+                        json.loads(data.get("deliver_queue")),
+                    )
                     break
 
         if self._state == State.PENDING:
@@ -79,6 +90,7 @@ class Server:
                 self._tcp_listener.address,
                 self._tcp_listener.port,
             )
+            self._rom_listener.set_group_view(self._group_view)
 
         self._logger.debug(f"In Request Join: {self._state}, {self._group_view}")
 
@@ -92,11 +104,11 @@ class Server:
                     "leader": f"{self._uuid}",
                     "group_view": self._group_view,
                     "rnumbers": json.dumps(self._rom_listener._rnumbers),
+                    "deliver_queue": json.dumps(self._rom_listener._deliver_queue),
                     # "buisness_data": TODO send the current state of the system to the new member
                 }
 
                 self._rom_listener.register_new_member(data["uuid"])
-                self._rom_listener.set_current_group_count(len(self._group_view))
                 self._tcp_listener.send(
                     json.dumps(welcome_msg), self._group_view[data["uuid"]]
                 )
@@ -127,7 +139,9 @@ class Server:
                     self._logger.debug(f"How did we get here?\n {data}")
         elif data["intention"] == SHUTDOWN_SERVER:
             add = "(leader)" if data["uuid"] == self._current_leader else ""
-            self._logger.debug(f"Received shutdown message from {data['uuid']}{add}, will start an election.")
+            self._logger.debug(
+                f"Received shutdown message from {data['uuid']}{add}, will start an election."
+            )
             self._start_election()
         else:
             self._logger.debug(f"Received broadcast message: {data} from {addr}")
@@ -179,7 +193,9 @@ class Server:
                     json.dumps(msg), self._group_view[self._current_leader]
                 )
             except ConnectionRefusedError:
-                self._logger.warning("Leader seems to be offline, starting new election.")
+                self._logger.warning(
+                    "Leader seems to be offline, starting new election."
+                )
                 self._start_election()
         else:
             self._logger.debug("Not sending heartbeat because I am participating in an election.")
@@ -201,7 +217,9 @@ class Server:
                         self._logger.debug(f"Node {uuid} has timed out twice in a row. Removing.")
                         remove.append(uuid)
             else:
-                self._logger.debug(f"Node {uuid} does not appear to be in group view. Removing.")
+                self._logger.debug(
+                    f"Node {uuid} does not appear to be in group view. Removing."
+                )
                 remove.append(uuid)
 
         if remove:
@@ -236,7 +254,9 @@ class Server:
                 self._tcp_listener.send(json.dumps(message), self._group_view[neighbor])
                 success = True
             except ConnectionRefusedError as e:
-                self._logger.warning(f"Could not send election message to {neighbor}: {e}.")
+                self._logger.warning(
+                    f"Could not send election message to {neighbor}: {e}."
+                )
 
     def _on_election_message(self, data):
         self._logger.debug(f"Received Election Message from {data['mid']}")
@@ -290,8 +310,10 @@ class Server:
             self._send_election_message(data)
 
     def _distribute_group_view(self):
-        self._logger.debug(f"Distributing group view to {len(self._group_view.keys())-1} members.")
-        self._rom_listener.set_current_group_count(len(self._group_view))
+        self._logger.debug(
+            f"Distributing group view to {len(self._group_view.keys())-1} members."
+        )
+        self._rom_listener.set_group_view(self._group_view)
         for uuid, address in self._group_view.items():
             if uuid != self._uuid:
                 data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
@@ -306,8 +328,8 @@ class Server:
             group_view[key] = tuple(value)
         for new_member in set(group_view.keys()) - set(self._group_view.keys()):
             self._rom_listener.register_new_member(new_member)
-        self._rom_listener.set_current_group_count(len(group_view))
         self._group_view = group_view
+        self._rom_listener.set_group_view(self._group_view)
         self._logger.debug(
             f"Received updated group view with {len(list(self._group_view.keys()))} items."
         )
@@ -321,7 +343,6 @@ class Server:
         elif res["intention"] == SHUTDOWN_SERVER:
             self._group_view.pop(res["uuid"])
             self._heartbeats.pop(res["uuid"])
-            self._rom_listener.set_current_group_count(len(self._group_view))
             self._logger.debug(
                 f"Received shutdown message from sever {res['uuid']}. Removing from group view."
             )

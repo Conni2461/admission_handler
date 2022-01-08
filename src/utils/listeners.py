@@ -169,17 +169,18 @@ class UDPListener(SocketThread):
 
 
 class ROMulticast(SocketThread):
-    def __init__(self, id):
+    def __init__(self, id, view):
         super().__init__()
         self._name = id
         self._snumber = 0
         self._rnumbers = {self._name: self._snumber}
-        self._current_group_count = 1
+        self._current_group_view = view
         self._received = {}
         self._holdback = {}
 
         self._out = {}
         self._out_a = {}
+        self._group_view_backlog = {}
         self._deliver_queue = {}
 
         self._aq = 0  # Largest agreed seqeunce number
@@ -204,14 +205,22 @@ class ROMulticast(SocketThread):
         self._logger = logging.getLogger("ROMulticast")
         self._logger.setLevel(logging.DEBUG)
 
-    def set_current_group_count(self, count):
-        self._current_group_count = count
+    def set_group_view(self, view):
+        self._current_group_view = view
+        to_delete = []
+        for id in self._out_a.keys():
+            el = self._complete_proposal(id)
+            if el is not None:
+                to_delete.append(el)
+        for id in to_delete:
+            del self._out_a[id]
 
     def register_new_member(self, id):
         self._rnumbers[id] = 0
 
-    def set_r_list(self, rnumbers):
+    def sync_state(self, rnumbers, deliver_queue):
         self._rnumbers.update(rnumbers)
+        self._deliver_queue.update(deliver_queue)
 
     def _send(self, mesg: dict):
         mesg["sender"] = self._name
@@ -237,7 +246,10 @@ class ROMulticast(SocketThread):
         # So we also place this message in `self._out`
         if "sender" not in mesg:
             mesg["original"] = self._name
-            self._out_a[mesg["id"]] = []
+            self._out_a[mesg["id"]] = {}
+            self._group_view_backlog[mesg["id"]] = copy.deepcopy(
+                self._current_group_view
+            )
 
         self._send(mesg)
 
@@ -249,16 +261,31 @@ class ROMulticast(SocketThread):
             "mesg_id": data["id"],
             "pq": self._pq,
             "id": str(uuid.uuid4()),
+            "sender": self._name,
         }
         self._sender_socket.sendto(json.dumps(mesg).encode(), addr)
 
-    def _collect_order_proposals(self, data: dict):
+    def _collect_order_proposals(self, data: dict, addr):
         id = data["mesg_id"]
         pq = data["pq"]
-        self._out_a[id].append(pq)
-        if len(self._out_a[id]) != self._current_group_count:
+
+        if id not in self._out_a:
             return
-        a = max(self._out_a[id])
+        self._out_a[id][data["sender"]] = pq
+        el = self._complete_proposal(id)
+        if el is not None:
+            del self._out_a[el]
+
+    def _complete_proposal(self, id):
+        prev_participants = set(self._group_view_backlog[id].keys())
+        curr_participants = set(self._current_group_view.keys())
+        diff = prev_participants.intersection(curr_participants) - set(
+            self._out_a[id].keys()
+        )
+
+        if len(diff) > 0:
+            return None
+        a = max(self._out_a[id].values())
         mesg = {
             "purpose": str(Purpose.FIN_SEQ),
             "mesg_id": id,
@@ -266,6 +293,7 @@ class ROMulticast(SocketThread):
             "id": str(uuid.uuid4()),
         }
         self._send(mesg)
+        return id
 
     def _deliver_message(self, data: dict):
         id = data["mesg_id"]
@@ -302,7 +330,6 @@ class ROMulticast(SocketThread):
                 found = id
                 break
         if found is not None:
-            print("found a message")
             return self._holdback.pop(found)
         return None
 
@@ -334,7 +361,7 @@ class ROMulticast(SocketThread):
 
     def _handle(self, data: dict, addr):
         if data["purpose"] == str(Purpose.PROP_SEQ):
-            self._collect_order_proposals(data)
+            self._collect_order_proposals(data, addr)
             return
         elif data["purpose"] == str(Purpose.NACK):
             for nack in data["nacks"]:
@@ -377,7 +404,6 @@ class ROMulticast(SocketThread):
                     f"skipping message {id} from {sender} with {s} and {self._rnumbers}"
                 )
             else:
-                print(s, self._rnumbers)
                 self._request_missing(data, addr, s, self._rnumbers[sender])
         else:
             if data["S"] == self._rnumbers[sender] + 1:
