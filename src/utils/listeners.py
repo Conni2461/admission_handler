@@ -239,9 +239,6 @@ class ROMulticast(SocketThread):
 
     def _propose_order(self, data: dict, addr):
         self._deliver_queue[data["id"]] = data
-        if data["original"] == self._name:
-            return
-
         self._pq = max(self._aq, self._pq) + 1
         mesg = {
             "purpose": str(Purpose.PROP_SEQ),
@@ -255,7 +252,7 @@ class ROMulticast(SocketThread):
         id = data["mesg_id"]
         pq = data["pq"]
         self._out_a[id].append(pq)
-        if len(self._out_a[id]) != len(self._rnumbers) - 1:
+        if len(self._out_a[id]) != len(self._rnumbers):
             return
         a = max(self._out_a[id])
         mesg = {
@@ -327,7 +324,7 @@ class ROMulticast(SocketThread):
         mesg = {
             "purpose": str(Purpose.NACK),
             "id": str(uuid.uuid4),
-            "nack": nacks,
+            "nacks": nacks,
         }
         self._sender_socket.sendto(json.dumps(mesg).encode(), addr)
 
@@ -349,9 +346,8 @@ class ROMulticast(SocketThread):
         sender = data["sender"]
         id = data["id"]
         if sender not in self._rnumbers:
-            self._rnumbers[sender] = 0
-            # self._logger.error(f"Don't know rnumer {data['sender']}")
-            # return
+            self._logger.error(f"Don't know rnumer {data['sender']}")
+            return
 
         # Reliable Multicast
         if id not in self._received:
