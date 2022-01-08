@@ -20,7 +20,9 @@ def broadcast(port, broadcast_message):
     else:
         broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    broadcast_socket.sendto(str.encode(json.dumps(broadcast_message)), ("<broadcast>", port))
+    broadcast_socket.sendto(
+        str.encode(json.dumps(broadcast_message)), ("<broadcast>", port)
+    )
     broadcast_socket.close()
 
 
@@ -28,6 +30,7 @@ class CustomLogger(logging.getLoggerClass()):
     def __init__(self, name, level=logging.INFO):
         super().__init__(name)
         self.setLevel(level)
+
 
 class CircularList(list):
     def __init__(self, *args):
@@ -42,6 +45,7 @@ class CircularList(list):
         else:
             self.i = 0
         return self[self.i]
+
 
 class RepeatTimer(Timer):
     def run(self):
