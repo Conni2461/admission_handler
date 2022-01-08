@@ -174,6 +174,7 @@ class ROMulticast(SocketThread):
         self._name = id
         self._snumber = 0
         self._rnumbers = {self._name: self._snumber}
+        self._current_group_count = 1
         self._received = {}
         self._holdback = {}
 
@@ -202,6 +203,9 @@ class ROMulticast(SocketThread):
 
         self._logger = logging.getLogger("ROMulticast")
         self._logger.setLevel(logging.DEBUG)
+
+    def set_current_group_count(self, count):
+        self._current_group_count = count
 
     def register_new_member(self, id):
         self._rnumbers[id] = 0
@@ -252,7 +256,7 @@ class ROMulticast(SocketThread):
         id = data["mesg_id"]
         pq = data["pq"]
         self._out_a[id].append(pq)
-        if len(self._out_a[id]) != len(self._rnumbers):
+        if len(self._out_a[id]) != self._current_group_count:
             return
         a = max(self._out_a[id])
         mesg = {

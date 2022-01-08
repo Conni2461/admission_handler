@@ -96,6 +96,7 @@ class Server:
                 }
 
                 self._rom_listener.register_new_member(data["uuid"])
+                self._rom_listener.set_current_group_count(len(self._group_view))
                 self._tcp_listener.send(
                     json.dumps(welcome_msg), self._group_view[data["uuid"]]
                 )
@@ -282,6 +283,7 @@ class Server:
 
     def _distribute_group_view(self):
         self._logger.debug(f"Distributing group view to {len(self._group_view.keys())-1} members.")
+        self._rom_listener.set_current_group_count(len(self._group_view))
         for uuid, address in self._group_view.items():
             if uuid != self._uuid:
                 data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
@@ -296,6 +298,7 @@ class Server:
             group_view[key] = tuple(value)
         for new_member in set(group_view.keys()) - set(self._group_view.keys()):
             self._rom_listener.register_new_member(new_member)
+        self._rom_listener.set_current_group_count(len(group_view))
         self._group_view = group_view
         self._logger.debug(
             f"Received updated group view with {len(list(self._group_view.keys()))} items."
@@ -310,6 +313,7 @@ class Server:
         elif res["intention"] == SHUTDOWN_SERVER:
             self._group_view.pop(res["uuid"])
             self._heartbeats.pop(res["uuid"])
+            self._rom_listener.set_current_group_count(len(self._group_view))
             self._logger.debug(
                 f"Received shutdown message from sever {res['uuid']}. Removing from group view."
             )
