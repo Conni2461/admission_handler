@@ -196,7 +196,7 @@ class Server:
                 diff = latest_beat - now
                 if diff > HEARTBEAT_TIMEOUT:
                     self._logger.debug(f"Node {uuid} has timed out.")
-                    self._heartbeats[uuid]["strikes"] += 1
+                    self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
                     if self._heartbeats[uuid]["strikes"] >= 2:
                         self._logger.debug(f"Node {uuid} has timed out twice in a row. Removing.")
                         remove.append(uuid)
@@ -207,6 +207,7 @@ class Server:
         if remove:
             for uid in remove:
                 self._group_view.pop(uid)
+                self._heartbeats.pop(uuid)
             self._distribute_group_view()
 
     def _on_received_heartbeat(self, data):
