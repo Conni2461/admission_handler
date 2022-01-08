@@ -108,6 +108,7 @@ class Server:
 
                 self._logger.debug("New group view is: {}".format(self._group_view))
 
+                self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
                 self._distribute_group_view()
 
                 self._logger.debug("Checking election required.")
@@ -192,6 +193,10 @@ class Server:
                 diff = latest_beat - now
                 if diff > HEARTBEAT_TIMEOUT:
                     self._logger.debug(f"Node {uuid} has timed out.")
+                    self._heartbeats[uuid]["strikes"] += 1
+                    if self._heartbeats[uuid]["strikes"] >= 2:
+                        self._logger.debug(f"Node {uuid} has timed out twice in a row. Removing.")
+                        remove.append(uuid)
             else:
                 self._logger.debug(f"Node {uuid} does not appear to be in group view. Removing.")
                 remove.append(uuid)
@@ -203,8 +208,8 @@ class Server:
 
     def _on_received_heartbeat(self, data):
         uuid = data["uuid"]
-        self._logger.debug(f"Recevied heartbeat from {uuid}.")
         if uuid in self._group_view:
+            self._logger.debug(f"Received heartbeat from {uuid}.")
             self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
         else:
             self._logger.warning(
