@@ -34,6 +34,9 @@ class Server:
         self._heartbeats = {}
         self._heartbeat_timer = None
 
+        self._setup_connections()
+
+    def _setup_connections(self):
         dispatcher.connect(
             self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener
         )
@@ -42,6 +45,74 @@ class Server:
         )
         dispatcher.connect(
             self._on_rom_msg, signal=ON_MULTICAST_MESSAGE, sender=self._rom_listener
+        )
+
+    # network message handler methods -----------------------------------------
+
+    def _on_udp_msg(self, data=None, addr=None):
+        if data.get("uuid") == self._uuid:
+            return
+
+        if (data["intention"] == IDENT_SERVER) and (self._state == State.LEADER):
+            self._register_server(data)
+
+        elif data["intention"] == IDENT_CLIENT:
+            self._logger.debug(f"TODO: {data}")
+
+        elif data["intention"] == SHUTDOWN_SERVER:
+            add = "(leader)" if data["uuid"] == self._current_leader else ""
+            self._logger.debug(
+                f"Received shutdown message from {data['uuid']}{add}, will start an election."
+            )
+            self._start_election()
+
+        else:
+            self._logger.debug(f"Received broadcast message: {data} from {addr}")
+
+    def _on_tcp_msg(self, data=None, addr=None):
+        res = json.loads(data)
+        if res["intention"] == UPDATE_GROUP_VIEW:
+            self._on_received_grp_view(res)
+        elif res["intention"] == ELECTION_MESSAGE:
+            self._on_election_message(res)
+        elif res["intention"] == SHUTDOWN_SERVER:
+            self._group_view.pop(res["uuid"])
+            self._heartbeats.pop(res["uuid"])
+            self._logger.debug(
+                f"Received shutdown message from sever {res['uuid']}. Removing from group view."
+            )
+            self._distribute_group_view()
+        elif res["intention"] == HEARTBEAT:
+            self._on_received_heartbeat(res)
+
+    def _on_rom_msg(self, data=None):
+        self._logger.debug(f"TODO: Do something with rom message: {data}")
+
+    # group view methods ------------------------------------------------------
+
+    def _distribute_group_view(self):
+        self._logger.debug(
+            f"Distributing group view to {len(self._group_view.keys())-1} members."
+        )
+        self._rom_listener.set_group_view(self._group_view)
+        for uuid, address in self._group_view.items():
+            if uuid != self._uuid:
+                data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
+                try:
+                    self._tcp_listener.send(json.dumps(data), address)
+                except ConnectionRefusedError as e:
+                    self._logger.warning(f"Could not send group view to: {uuid} - {e}.")
+
+    def _on_received_grp_view(self, data):
+        group_view = {}
+        for key, value in data["group_view"].items():
+            group_view[key] = tuple(value)
+        for new_member in set(group_view.keys()) - set(self._group_view.keys()):
+            self._rom_listener.register_new_member(new_member)
+        self._group_view = group_view
+        self._rom_listener.set_group_view(self._group_view)
+        self._logger.debug(
+            f"Received updated group view with {len(list(self._group_view.keys()))} items."
         )
 
     def _request_join(self):
@@ -86,57 +157,41 @@ class Server:
 
         self._logger.debug(f"In Request Join: {self._state}, {self._group_view}")
 
-    def _on_udp_msg(self, data=None, addr=None):
-        if self._state == State.LEADER:
-            if data["intention"] == IDENT_SERVER and data["uuid"] != self._uuid:
-                self._group_view[data["uuid"]] = (data["address"], data["port"])
+    def _register_server(self, data):
+        self._group_view[data["uuid"]] = (data["address"], data["port"])
 
-                welcome_msg = {
-                    "intention": ACCEPT_SERVER,
-                    "leader": f"{self._uuid}",
-                    "group_view": self._group_view,
-                    "rnumbers": json.dumps(self._rom_listener._rnumbers),
-                    "deliver_queue": json.dumps(self._rom_listener._deliver_queue),
-                    # "buisness_data": TODO send the current state of the system to the new member
-                }
+        welcome_msg = {
+            "intention": ACCEPT_SERVER,
+            "leader": f"{self._uuid}",
+            "group_view": self._group_view,
+            "rnumbers": json.dumps(self._rom_listener._rnumbers),
+            "deliver_queue": json.dumps(self._rom_listener._deliver_queue),
+            # "buisness_data": TODO send the current state of the system to the new member
+        }
 
-                self._rom_listener.register_new_member(data["uuid"])
-                self._tcp_listener.send(
-                    json.dumps(welcome_msg), self._group_view[data["uuid"]]
-                )
-                self._logger.debug(
-                    "Received server join request from {}".format(
-                        (data["address"], data["port"])
-                    )
-                )
-
-                self._logger.debug("New group view is: {}".format(self._group_view))
-
-                self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
-                self._distribute_group_view()
-
-                self._logger.debug("Checking election required.")
-                if self._election_required():
-                    self._logger.debug("Election is required, starting election.")
-                    self._start_election()
-                else:
-                    self._logger.debug("No election required.")
-
-            elif data["intention"] == IDENT_CLIENT:
-                self._logger.debug(f"TODO: {data}")
-            else:
-                # TODO: handle other broadcasts?
-                if data["uuid"] != self._uuid:
-                    # TODO: maybe ignore udp msg uuids that we sent ourselves
-                    self._logger.debug(f"How did we get here?\n {data}")
-        elif data["intention"] == SHUTDOWN_SERVER:
-            add = "(leader)" if data["uuid"] == self._current_leader else ""
-            self._logger.debug(
-                f"Received shutdown message from {data['uuid']}{add}, will start an election."
+        self._rom_listener.register_new_member(data["uuid"])
+        self._tcp_listener.send(
+            json.dumps(welcome_msg), self._group_view[data["uuid"]]
+        )
+        self._logger.debug(
+            "Received server join request from {}".format(
+                (data["address"], data["port"])
             )
+        )
+
+        self._logger.debug("New group view is: {}".format(self._group_view))
+
+        self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
+        self._distribute_group_view()
+
+        self._logger.debug("Checking election required.")
+        if self._election_required():
+            self._logger.debug("Election is required, starting election.")
             self._start_election()
         else:
-            self._logger.debug(f"Received broadcast message: {data} from {addr}")
+            self._logger.debug("No election required.")
+
+    # election methods --------------------------------------------------------
 
     def _start_election(self):
         neighbor = self._get_neighbor()
@@ -161,74 +216,6 @@ class Server:
         return CircularList(
             sorted([member for member in self._group_view.keys()], reverse=True)
         )
-
-    def _set_leader(self, state=True):
-        if state:
-            self._state = State.LEADER
-            if self._heartbeat_timer is not None:
-                self._heartbeat_timer.cancel()
-            self._heartbeat_timer = RepeatTimer(
-                HEARTBEAT_TIMEOUT + 5, self._check_heartbeats
-            )
-            self._heartbeat_timer.start()
-        else:
-            if self._heartbeat_timer is not None:
-                self._heartbeat_timer.cancel()
-            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, self._send_heartbeat)
-            self._heartbeat_timer.start()
-
-    def _send_heartbeat(self):
-        if not self._participating:
-            msg = {"intention": HEARTBEAT, "uuid": f"{self._uuid}"}
-            try:
-                self._tcp_listener.send(
-                    json.dumps(msg), self._group_view[self._current_leader]
-                )
-            except ConnectionRefusedError:
-                self._logger.warning(
-                    "Leader seems to be offline, starting new election."
-                )
-                self._start_election()
-        else:
-            self._logger.debug("Not sending heartbeat because I am participating in an election.")
-
-    def _check_heartbeats(self):
-        self._logger.debug("Checking heartbeats.")
-        now = datetime.datetime.now().timestamp()
-        remove = []
-        for uuid in self._group_view.keys():
-            if uuid == self._uuid:
-                continue
-            latest_beat = self._heartbeats.get(uuid, {}).get("ts")
-            if latest_beat:
-                diff = now - latest_beat
-                if diff > HEARTBEAT_TIMEOUT:
-                    self._logger.debug(f"Node {uuid} has timed out.")
-                    self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
-                    if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
-                        self._logger.debug(f"Node {uuid} has timed out twice in a row. Removing.")
-                        remove.append(uuid)
-            else:
-                self._logger.debug(
-                    f"Node {uuid} does not appear to be in group view. Removing."
-                )
-                remove.append(uuid)
-
-        if remove:
-            for uid in remove:
-                self._group_view.pop(uid)
-                self._heartbeats.pop(uid)
-            self._distribute_group_view()
-
-    def _on_received_heartbeat(self, data):
-        uuid = data["uuid"]
-        if uuid in self._group_view:
-            self._logger.debug(f"Received heartbeat from {uuid}.")
-            self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
-        else:
-            self._logger.warning(
-                f"Received heartbeat from {uuid} who is not in group view."
-            )
 
     def _send_election_message(self, message):
         prev_neighbor = None
@@ -302,49 +289,78 @@ class Server:
             self._participating = False
             self._send_election_message(data)
 
-    def _distribute_group_view(self):
-        self._logger.debug(
-            f"Distributing group view to {len(self._group_view.keys())-1} members."
-        )
-        self._rom_listener.set_group_view(self._group_view)
-        for uuid, address in self._group_view.items():
-            if uuid != self._uuid:
-                data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
-                try:
-                    self._tcp_listener.send(json.dumps(data), address)
-                except ConnectionRefusedError as e:
-                    self._logger.warning(f"Could not send group view to: {uuid} - {e}.")
+    # heartbeat methods -------------------------------------------------------
 
-    def _on_received_grp_view(self, data):
-        group_view = {}
-        for key, value in data["group_view"].items():
-            group_view[key] = tuple(value)
-        for new_member in set(group_view.keys()) - set(self._group_view.keys()):
-            self._rom_listener.register_new_member(new_member)
-        self._group_view = group_view
-        self._rom_listener.set_group_view(self._group_view)
-        self._logger.debug(
-            f"Received updated group view with {len(list(self._group_view.keys()))} items."
-        )
+    def _send_heartbeat(self):
+        if not self._participating:
+            msg = {"intention": HEARTBEAT, "uuid": f"{self._uuid}"}
+            try:
+                self._tcp_listener.send(
+                    json.dumps(msg), self._group_view[self._current_leader]
+                )
+            except ConnectionRefusedError:
+                self._logger.warning(
+                    "Leader seems to be offline, starting new election."
+                )
+                self._start_election()
+        else:
+            self._logger.debug("Not sending heartbeat because I am participating in an election.")
 
-    def _on_tcp_msg(self, data=None, addr=None):
-        res = json.loads(data)
-        if res["intention"] == UPDATE_GROUP_VIEW:
-            self._on_received_grp_view(res)
-        elif res["intention"] == ELECTION_MESSAGE:
-            self._on_election_message(res)
-        elif res["intention"] == SHUTDOWN_SERVER:
-            self._group_view.pop(res["uuid"])
-            self._heartbeats.pop(res["uuid"])
-            self._logger.debug(
-                f"Received shutdown message from sever {res['uuid']}. Removing from group view."
-            )
+    def _check_heartbeats(self):
+        self._logger.debug("Checking heartbeats.")
+        now = datetime.datetime.now().timestamp()
+        remove = []
+        for uuid in self._group_view.keys():
+            if uuid == self._uuid:
+                continue
+            latest_beat = self._heartbeats.get(uuid, {}).get("ts")
+            if latest_beat:
+                diff = now - latest_beat
+                if diff > HEARTBEAT_TIMEOUT:
+                    self._logger.debug(f"Node {uuid} has timed out.")
+                    self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
+                    if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
+                        self._logger.debug(f"Node {uuid} has timed out twice in a row. Removing.")
+                        remove.append(uuid)
+            else:
+                self._logger.debug(
+                    f"Node {uuid} does not appear to be in group view. Removing."
+                )
+                remove.append(uuid)
+
+        if remove:
+            for uid in remove:
+                self._group_view.pop(uid)
+                self._heartbeats.pop(uid)
             self._distribute_group_view()
-        elif res["intention"] == HEARTBEAT:
-            self._on_received_heartbeat(res)
 
-    def _on_rom_msg(self, data=None):
-        self._logger.debug(f"TODO: Do something with rom message: {data}")
+    def _on_received_heartbeat(self, data):
+        if data['uuid'] in self._group_view:
+            self._logger.debug(f"Received heartbeat from {data['uuid']}.")
+            self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
+        else:
+            self._logger.warning(
+                f"Received heartbeat from {data['uuid']} who is not in group view."
+            )
+
+    # other methods -----------------------------------------------------------
+
+    def _set_leader(self, state=True):
+        if state:
+            self._state = State.LEADER
+            if self._heartbeat_timer is not None:
+                self._heartbeat_timer.cancel()
+            self._heartbeat_timer = RepeatTimer(
+                HEARTBEAT_TIMEOUT + 5, self._check_heartbeats
+            )
+            self._heartbeat_timer.start()
+        else:
+            if self._heartbeat_timer is not None:
+                self._heartbeat_timer.cancel()
+            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, self._send_heartbeat)
+            self._heartbeat_timer.start()
+
+    # process methods ---------------------------------------------------------
 
     def _shut_down(self):
         self._logger.info("Shutting down.")

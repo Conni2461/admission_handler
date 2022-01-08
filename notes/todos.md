@@ -16,6 +16,7 @@
     - [x] Infrastructure
     - [x] Reliable
     - [x] Ordered
+    - [ ] what happens if a server is missing a message (nAck) from another server that is no longer online/ in the group view ?
 
 - [ ] Failure-Model
     - [ ] Clients
