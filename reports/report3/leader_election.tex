@@ -1,0 +1,31 @@
+\documentclass[runningheads]{llncs}
+\usepackage{xr}
+\externaldocument{group_management}
+
+\begin{document}
+
+\section{Voting (Leader Election)}
+
+A leader election can be triggered by three scenarios.
+
+The first scenario is the leader deciding to trigger an election when a new server joins the group and the leader deems it necessary. The necessity of an election is decided based on the group view including the new member. Should the leader no longer fulfill the requirement (largest \textit{uuid}) an election is deemed necessary.
+
+The second scenario is a group member (not leader) not being able to connect to the leader when sending its heartbeat and thus triggering an election. This covers the case that should a leader shut down or crash unexpectedly, the members will pick up on this and trigger an election.
+
+The third scenario occurs when a leader shuts down and broadcasts its shutdown message. Any group member receiving this message will trigger a new election. This should be the standard case in which a leader shuts down planned and properly.
+
+\subsection{Election Algorithm}
+
+The implemented algorithm used for leader election is the LCR algorithm. The ring structure allows for easy failure detection in a participating group member as connections between neighbors are established using TCP. Should a group member not be reachable, it will be skipped and the next member tried. All members have access to and define their next neighbor based on the current group view (see \ref{grpmngmnt}) which leads to an optimal complexity of O(n log n). Should a member find itself to be its own next available neighbor, it will mark itself as the leader, as this implies there are no other available members.
+
+On completion of the leader election, the previous leader will switch its status to \textit{MEMBER} and start sending out heartbeats to the new leader (see \ref{heartbeats}). Accordingly, the new leader will switch its mode to \textit{LEADER} and start listening for heartbeats.
+
+\subsection{Failure Management}
+
+Should a participating member crash during an election, it will simply be skipped. If this node recovers and comes online at a later point, it will send its heartbeat to the wrong server, triggering a new election.
+
+If a node that has declared itself leader crashes before it can abort the election on receiving its own leader message, a subsequent node will receive a leader message without being marked as \textit{PARTICIPATING}. In this case, the node will abort the current election and start a new one.
+
+\textit{Note: Need to implement a method for detecting a leader that has crashed and come back online to ensure there is only 1 leader.}
+
+\end{document}

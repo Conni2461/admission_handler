@@ -17,6 +17,7 @@
     - [x] Reliable
     - [x] Ordered
     - [ ] what happens if a server is missing a message (nAck) from another server that is no longer online/ in the group view ?
+    - [ ] "_handle" method in listeners is not using tcp
 
 - [ ] Failure-Model
     - [ ] Clients
