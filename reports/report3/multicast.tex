@@ -1,0 +1,96 @@
+\documentclass[runningheads]{llncs}
+
+\begin{document}
+
+\section{Reliable Totally Ordered Multicast} \label{multicast}
+
+Application messages inside the group will be sent via reliable totally ordered
+Multicast. In the following, we will describe our implementation and explain
+how we handled some corner cases we stumbled across.
+
+\subsection{Procedure} \label{multicastprocedure}
+
+Reliable Totally Ordered Multicast is build upon the IP/Multicast protocol.
+Each server has two sockets to realize it, one listener socket which listens on
+our defined Multicast address and another socket which is used to send messages
+so all messages has a unique sender address. The second socket is needed, so we
+know exactly the address who sent a message, so we can answer this server
+directly.
+
+If one server sends a message to the group, we add multiple things to the
+messages. First we need to give the message a type, so we can distinguish
+between messages that are content and messages that are needed for the
+protocol. We also add a unique identifier for this message, the unique
+identifier of the sender and $S$ of the server. $S$ is needed for reliability
+so we know which messages a server missed, so these can be requested for
+redelivery.
+
+If the new message was sent, each server listening on the broadcast address,
+might now receive this message. First we check if we already received this
+message, by comparing the unique message identifier with our received messages.
+If we already received the message we can ignore it, if we haven't received it
+we put it in our received backlog, and we send a copy of the message to the
+group if we aren't the sender of this message. Then we check the piggyback $S$
+value and compare it with the current $R$ for that sender. If $S = R + 1$ then
+the new message is the next message from this sender, if the $S \leq R + 1$
+then the message was already delivered, and we can ignore it and if $S > R + 1$
+that means we have missed messages that we either need to request from this
+address or messages that could be found in the holdback queue of the server.
+
+We first look at the case where the next message was delivered ($S = R + 1$).
+In this case, we then decided to implement ISIS total ordering.
+% TODO: Maybe we need to explain here why we need total ordering. Maybe we also
+% do this earlier
+First we need to set $R$ to $R + 1$, and then we start processing our message
+by looking at the type of the message. If the message is a new Application
+message we need to propose an order to the original sender by answering with a
+$pq = max(aq, pq) + 1$. $aq$ is the largest agreed sequence number and $pq$ is
+the largest proposed sequence number. This message will be sent to the second
+socket address, not via Multicast, so it only reaches the server which needs
+the answers.
+
+This server will then collect these answers from all active members in the
+group (we will discuss later how we are handling this with dynamic joining and
+leaving servers \ref{multicastchanges}). When all messages are collected the
+server will broadcast a new message, with a different type. The content of the
+message is the agreed sequence number $a =
+max(all\_proposed\_sequence\_numbers)$. We also add a unique ID, sender ID and
+the next $S$ to this message, so the message is also reliable.
+
+Upon receiving the message, we compare the $S$ value with the current $R$ the
+same way as described above, but we handle the message a different if $S = R +
+1$. Now we need to reorder the delivery group based on the received $a$. The
+delivery queue is the queue of the next messages that will be delivered, we
+have two queues to make it easier for us to handle. A holdback queue of
+messages that can't be processed yet because of missing messages and the
+delivery queue.
+
+Now we look into what we can do if we notice that we have missed a message. If
+$S > R + 1$ we know we have missed at least one message from the sender. We put
+this new message in our holdback queue, for later processing and then look
+inside the whole back queue if we maybe already received the next message in
+the order defined by $S$ and $R$. If that is the case, we process these
+messages and remove them from the holdback queue until we find a message for
+that $S = R + 1$ is no longer true. We collect all missing $S$ numbers and send
+the server a 1 to 1 message that we are missing these $S$ numbers. The server
+will then collect these messages and resend them. Both messages aren't
+protected with an S because if the message is lost, we run into the next
+failure of $S = R + 1$ when the next broadcast message arrives, and we end up
+running the algorithm again.
+
+\subsection{Server leaving and joining the group} \label{multicastchanges}
+
+If a new server joins, the group management will make sure that all servers set
+up the new member correctly and set $R$ for this server to 0. When the leader
+welcomes the new server, it also shares his current $R$ numbers of all the
+members of the group and all messages in the delivery queue, so that the new
+server can handle a next message that might be an order proposal.
+
+When waiting for proposal messages, the server will not wait for a proposal
+from the new joined server, if the server wasn't active when the original
+messages was sent. We realize this by keeping a snapshot of the group view at
+the time the message was sent. We then only wait for messages of members from
+$members_at_time_of_sending \cap current_members$. This also solves the issues
+that we no longer wait for messages from server, which already left the group.
+
+\end{document}
