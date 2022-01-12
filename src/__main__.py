@@ -1,6 +1,8 @@
 import argparse
 import logging
 
+from src.utils.signals import ON_ENTRY_REQUEST
+
 parser = argparse.ArgumentParser(description="No help")
 parser.add_argument("--server", action="store_true", default=False)
 parser.add_argument("--client", action="store_true", default=False)
@@ -16,13 +18,14 @@ if args.server:
     server = Server()
 
     def send():
-        server._rom_listener.send({"msg": f"test"})
+        server._rom_listener.send({"msg": "test"})
 
-    RepeatTimer(5, send).start()
+    #RepeatTimer(5, send).start()
     server.run()
 elif args.client:
     from .client.client import Client
-
-    Client().run()
+    from louie import dispatcher
+    number = 0
+    Client(number).run()
 else:
     parser.print_help()

@@ -1,0 +1,5 @@
+Architecture Idea:
+Server lockt Resource (over Leader)
+Server increments counter (by however many accumulated, but under the max)
+Server releases Resource (over leader)
+Leader or Server multicasts release together with new value

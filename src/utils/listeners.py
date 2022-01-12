@@ -189,8 +189,10 @@ class ROMulticast(SocketThread):
         self._listener_socket = socket.socket(
             socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
         )
-        self._listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        self._listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if sys.platform == "win32":
+            self._listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        else:
+            self._listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         self._listener_socket.bind(("", MULTICAST_PORT))
         mreq = struct.pack("4sl", socket.inet_aton(MULTICAST_IP), socket.INADDR_ANY)
         self._listener_socket.setsockopt(
