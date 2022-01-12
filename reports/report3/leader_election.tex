@@ -4,7 +4,7 @@
 
 \begin{document}
 
-\section{Voting (Leader Election)}
+\subsection{Voting (Leader Election)}
 
 A leader election can be triggered by three scenarios.
 
@@ -14,13 +14,13 @@ The second scenario is a group member (not leader) not being able to connect to 
 
 The third scenario occurs when a leader shuts down and broadcasts its shutdown message. Any group member receiving this message will trigger a new election. This should be the standard case in which a leader shuts down planned and properly.
 
-\subsection{Election Algorithm}
+\subsubsection{Election Algorithm}
 
 The implemented algorithm used for leader election is the LCR algorithm. The ring structure allows for easy failure detection in a participating group member as connections between neighbors are established using TCP. Should a group member not be reachable, it will be skipped and the next member tried. All members have access to and define their next neighbor based on the current group view (see \ref{grpmngmnt}) which leads to an optimal complexity of O(n log n). Should a member find itself to be its own next available neighbor, it will mark itself as the leader, as this implies there are no other available members.
 
 On completion of the leader election, the previous leader will switch its status to \textit{MEMBER} and start sending out heartbeats to the new leader (see \ref{heartbeats}). Accordingly, the new leader will switch its mode to \textit{LEADER} and start listening for heartbeats.
 
-\subsection{Failure Management}
+\subsubsection{Failure Management}
 
 Should a participating member crash during an election, it will simply be skipped. If this node recovers and comes online at a later point, it will send its heartbeat to the wrong server, triggering a new election.
 

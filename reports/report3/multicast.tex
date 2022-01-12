@@ -2,13 +2,13 @@
 
 \begin{document}
 
-\section{Reliable Totally Ordered Multicast} \label{multicast}
+\subsection{Reliable Totally Ordered Multicast} \label{multicast}
 
 Application messages inside the group will be sent via reliable totally ordered
 Multicast. In the following, we will describe our implementation and explain
 how we handled some corner cases we stumbled across.
 
-\subsection{Procedure} \label{multicastprocedure}
+\subsubsection{Procedure} \label{multicastprocedure}
 
 Reliable Totally Ordered Multicast is build upon the IP/Multicast protocol.
 Each server has two sockets to realize it, one listener socket which listens on
@@ -78,7 +78,7 @@ protected with an S because if the message is lost, we run into the next
 failure of $S = R + 1$ when the next broadcast message arrives, and we end up
 running the algorithm again.
 
-\subsection{Server leaving and joining the group} \label{multicastchanges}
+\subsubsection{Server leaving and joining the group} \label{multicastchanges}
 
 If a new server joins, the group management will make sure that all servers set
 up the new member correctly and set $R$ for this server to 0. When the leader
@@ -90,7 +90,7 @@ When waiting for proposal messages, the server will not wait for a proposal
 from the new joined server, if the server wasn't active when the original
 messages was sent. We realize this by keeping a snapshot of the group view at
 the time the message was sent. We then only wait for messages of members from
-$members_at_time_of_sending \cap current_members$. This also solves the issues
+$members\_at\_time\_of\_sending \cap current\_members$. This also solves the issues
 that we no longer wait for messages from server, which already left the group.
 
 \end{document}
