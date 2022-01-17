@@ -179,9 +179,9 @@ class ROMulticast(SocketThread):
         self._rnumbers = {self._name: self._snumber}
         self._current_group_view = view
         self._received = {}
-        self._holdback = {} # { id = { data: data, addr: addr } } dict
+        self._holdback = {}  # { id = { data: data, addr: addr } } dict
 
-        self._out = {} # { snumber: msg, ... } dict
+        self._out = {}  # { snumber: msg, ... } dict
         self._out_a = {}
         self._group_view_backlog = {}
         self._deliver_queue = {}
@@ -212,13 +212,17 @@ class ROMulticast(SocketThread):
 
     def set_group_view(self, view):
         self._current_group_view = view
-        to_delete = []
-        for id in self._out_a.keys():
-            el = self._complete_proposal(id)
-            if el is not None:
-                to_delete.append(el)
-        for id in to_delete:
-            del self._out_a[id]
+        # we need to make a copy because while we iterate thought it there is a
+        # good chance that thread/louie suspends the iterating to process a new
+        # message but because we are still iterating a removal of a value from
+        # `_out_a` could lead to an exception.
+        ids = list(self._out_a.keys())
+        for id in ids:
+            if id not in self._out_a:
+                continue
+            done = self._complete_proposal(id, self._out_a[id])
+            if done:
+                del self._out_a[id]
 
     def register_new_member(self, id):
         self._rnumbers[id] = 0
@@ -274,20 +278,18 @@ class ROMulticast(SocketThread):
         if id not in self._out_a:
             return
         self._out_a[id][data["sender"]] = pq
-        el = self._complete_proposal(id)
-        if el is not None:
-            del self._out_a[el]
+        done = self._complete_proposal(id, self._out_a[id])
+        if done:
+            del self._out_a[id]
 
-    def _complete_proposal(self, id):
+    def _complete_proposal(self, id, value):
         prev_participants = set(self._group_view_backlog[id].keys())
         curr_participants = set(self._current_group_view.keys())
-        diff = prev_participants.intersection(curr_participants) - set(
-            self._out_a[id].keys()
-        )
+        diff = prev_participants.intersection(curr_participants) - set(value.keys())
 
         if len(diff) > 0:
-            return None
-        a = max(self._out_a[id].values())
+            return False
+        a = max(value.values())
         mesg = {
             "purpose": str(Purpose.FIN_SEQ),
             "mesg_id": id,
@@ -295,7 +297,7 @@ class ROMulticast(SocketThread):
             "id": str(uuid.uuid4()),
         }
         self._send(mesg)
-        return id
+        return True
 
     def _deliver_message(self, data: dict):
         id = data["mesg_id"]
@@ -368,7 +370,9 @@ class ROMulticast(SocketThread):
         elif data["purpose"] == str(Purpose.NACK):
             for nack in data["nacks"]:
                 if nack in self._out:
-                    self._sender_socket.send(self._out[nack], addr)
+                    self._sender_socket.sendto(
+                        json.dumps(self._out[nack]).encode(), addr
+                    )
             return
 
         sender = data["sender"]
