@@ -42,7 +42,10 @@ class TCPListener(SocketThread):
     def __init__(self, timeout=TIMEOUT):
         super().__init__()
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.bind(("", 0))
+        if sys.platform == 'win32':
+            self._socket.bind(("127.0.0.1", 0))
+        else:
+            self._socket.bind(("", 0))
         socketname = self._socket.getsockname()
         self._address = socketname[0]
         self._port = socketname[1]
@@ -103,7 +106,7 @@ class TCPListener(SocketThread):
         while not self.stopped:
             data, addr = self.listen()
             if data:
-                self._logger.debug(f"Received msg {data.decode()}")
+                #self._logger.debug(f"Received msg {data.decode()}")
                 dispatcher.send(
                     signal=ON_TCP_MESSAGE,
                     sender=self,
@@ -152,7 +155,7 @@ class UDPListener(SocketThread):
                     continue
                 else:
                     self._msg_buffer.append(loaded_data["msg_uuid"])
-                self._logger.debug(f"Received msg {data}")
+                #self._logger.debug(f"Received msg {data}")
                 dispatcher.send(
                     signal=ON_BROADCAST_MESSAGE,
                     sender=self,

@@ -33,6 +33,7 @@ class Server:
         self._participating = False
         self._heartbeats = {}
         self._heartbeat_timer = None
+        self.entries = None
 
         self._setup_connections()
 
@@ -365,12 +366,15 @@ class Server:
     def _register_client(self, data, addr):
         mes = {
             "intention": ACCEPT_CLIENT,
+            "uuid": self._uuid,
+            "address": self._tcp_listener.address,
+            "port": self._tcp_listener.port
         }
         self._logger.info(data)
-        self._tcp_listener.send(mes, (data['address'],data['port']))
+        self._tcp_listener.send(json.dumps(mes), (data['address'],data['port']))
 
     def _on_request_entry(self, res, addr):
-        mes = {"uuid": f"{self.uuid}"}
+        mes = {"uuid": f"{self._uuid}"}
         if self._grant_entry():
             self._logger.info(f"A client with No. {res['number']} and UUID {res['uuid']} requests entry. Accepting.")
             mes["intention"] =  ACCEPT_ENTRY
@@ -378,7 +382,7 @@ class Server:
         else:
             self._logger.info(f"A client with No. {res['number']} and UUID {res['uuid']} requests entry. Denied, we are full.")
             mes["intention"] = DENY_ENTRY
-        self._tcp_listener.send(mes, addr)
+        self._tcp_listener.send(json.dumps(mes), (res['address'],res['port']))
 
     def _grant_entry(self):
         #TODO lock remote entries

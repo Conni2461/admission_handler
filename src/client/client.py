@@ -56,33 +56,38 @@ class Client:
             if res is not None:
                 data = json.loads(res)
                 if data.get("intention") == ACCEPT_CLIENT:
-                    self.server = add
+                    self._logger.debug(f"Recieved client accept message {data} from {add}")
+                    self.server = (data.get("address"),data.get("port"))
                     break
-
-    def request_entry(self):
-        mes = {
-            "intention": REQUEST_ENTRY,
-            "uuid": f"{self._uuid}",
-            "address": self._tcp_listener.address,
-            "port": self._tcp_listener.port,
-            "number": self.number
-        }
-        len = mes.encode().__len__
-        for _ in range(MAX_TRIES):
-            res = self._tcp_listener.send(mes, self.server)
-            if res != len:
-                self._logger.warn(f"Client No. {self.number} was unable to send a complete message! Retrying.")
-            else:
-                return
-        self._logger.warn(f"Client No. {self.number} discarding current server, seems to be unavailable or malfunctioning.")
-        self.server == None
-        self.find_server()
 
     def _on_entry_request(self):
         if self.server == None:
             self._logger.debug(f"Client No. {self.number} asked to request entry, but didn't have a server.")
         else:
-            self.request_entry()
+            mes = json.dumps({
+                "intention": REQUEST_ENTRY,
+                "uuid": f"{self._uuid}",
+                "address": self._tcp_listener.address,
+                "port": self._tcp_listener.port,
+                "number": self.number
+            })
+            len = mes.encode().__len__()
+            for _ in range(MAX_TRIES):
+                try:
+                    res = self._tcp_listener.send(mes, self.server)
+                except ConnectionRefusedError:
+                    self._logger.warn(f"Client No. {self.number} was refused when trying to connect to its server, will look for a new one.")
+                    self.server = None
+                    self.find_server()
+                    return
+                if res != len:
+                    self._logger.warn(f"Client No. {self.number} was unable to send a complete message! Retrying.")
+                else:
+                    self._logger.debug("Success! Waiting for response")
+                    return
+            self._logger.warn(f"Client No. {self.number} discarding current server, connection seems to be malfunctioning.")
+            self.server = None
+            self.find_server()
 
     def _on_udp_msg(self, data=None, addr=None):
         #TODO Actually send this
@@ -97,7 +102,7 @@ class Client:
             self.server == None
             self.find_server()
         elif res["intention"] == ACCEPT_CLIENT:
-            self._logger.info(f"Received client accept message: {res}")
+            self._logger.info(f"Received random client accept message: {res}")
         elif res["intention"] == ACCEPT_ENTRY:
             self._logger.info("Entry granted, please enjoy yourself!")
             self.entries = res["entries"]
@@ -111,17 +116,17 @@ class Client:
         self._udp_listener.join()
 
     def run(self):
-        #if self.server == None:
-        while self.server == None and input("Enter nothing to try to connect") == "":#self.server == None:
+        while self.server == None:
             self._logger.debug(f"Client {self.number} trying to find a server.")
             self.find_server()
 
+        self._logger.debug(f"Connected to server {self.server}")
         self._tcp_listener.start()
         self._udp_listener.start()
 
         try:
             while True:
-                input("TODO")
+                input("Please enter anything to send a request")
                 #TODO outsource this?
                 dispatcher.send(
                     signal=ON_ENTRY_REQUEST,
