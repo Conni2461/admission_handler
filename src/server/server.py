@@ -33,7 +33,7 @@ class Server:
         self._participating = False
         self._heartbeats = {}
         self._heartbeat_timer = None
-        self.entries = None
+        self.entries = 0
 
         self._setup_connections()
 
@@ -86,10 +86,13 @@ class Server:
         elif res["intention"] == HEARTBEAT:
             self._on_received_heartbeat(res)
         elif res["intention"] == REQUEST_ENTRY:
-            self._on_request_entry(res, addr)
+            self._on_request_entry(res)
 
     def _on_rom_msg(self, data=None):
-        self._logger.debug(f"TODO: Do something with rom message: {data}")
+        if data["intention"] == ACCEPT_CLIENT:
+            self._on_entry_request_rom(data)
+        else:
+            self._logger.debug(f"TODO: Do something with rom message: {data}")
 
     # group view methods ------------------------------------------------------
 
@@ -373,7 +376,44 @@ class Server:
         self._logger.info(data)
         self._tcp_listener.send(json.dumps(mes), (data['address'],data['port']))
 
-    def _on_request_entry(self, res, addr):
+    def _on_request_entry(self,res):
+        if self.entries >= MAX_ENTRIES:
+            mes = {"uuid": f"{self._uuid}", "intention": DENY_ENTRY}
+            self._tcp_listener.send(json.dumps(mes), (res['address'],res['port']))
+            return
+        mes = {
+            "uuid": f"{self._uuid}",
+            "intention": ACCEPT_CLIENT,
+            "client_uuid": res["uuid"],
+            "client_adr": res['address'],
+            "client_port": res['port']
+        }
+        try:
+            self._rom_listener.send(mes)
+        except ConnectionRefusedError:
+            self._logger.warn("Connection refused when trying to pass on client entry request")
+
+    def _on_entry_request_rom(self, res):
+        if res["uuid"] == self._uuid:
+            mes = {"uuid": f"{self._uuid}"}
+            addOne = False
+            if self.entries >= MAX_ENTRIES:
+                mes["intention"] = DENY_ENTRY
+            else:
+                addOne = True
+                mes["intention"] = ACCEPT_ENTRY
+                mes["entries"] = self.entries+1
+            try:
+                self._tcp_listener.send(json.dumps(mes), (res['client_adr'],res['client_port']))
+                if addOne: self.entries +=1
+            except ConnectionRefusedError:
+                self._logger.warn("Client refused connection when trying to accept it. Did not increase entries!")
+                #TODO this currently means that other servers increase even if this one fails to finish accepting the client
+        else:
+            if self.entries < MAX_ENTRIES: self.entries += 1
+
+    #TODO remove when we are sure this isn't needed
+    def _on_request_entry_old(self, res, addr):
         mes = {"uuid": f"{self._uuid}"}
         if self._grant_entry():
             self._logger.info(f"A client with No. {res['number']} and UUID {res['uuid']} requests entry. Accepting.")
@@ -384,6 +424,7 @@ class Server:
             mes["intention"] = DENY_ENTRY
         self._tcp_listener.send(json.dumps(mes), (res['address'],res['port']))
 
+    #TODO remove when we are sure this isn't needed
     def _grant_entry(self):
         #TODO lock remote entries
         if self.entries == None:
