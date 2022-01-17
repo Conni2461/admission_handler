@@ -7,9 +7,9 @@ import uuid
 
 from louie import dispatcher
 
-from ..utils.constants import (ACCEPT_SERVER, BROADCAST_PORT, ELECTION_MESSAGE,
+from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER, BROADCAST_PORT, DENY_ENTRY, ELECTION_MESSAGE,
                                HEARTBEAT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
-                               IDENT_SERVER, MAX_TIMEOUTS, MAX_TRIES,
+                               IDENT_SERVER, MAX_ENTRIES, MAX_TIMEOUTS, MAX_TRIES, REQUEST_ENTRY,
                                SHUTDOWN_SERVER, UPDATE_GROUP_VIEW, State)
 from ..utils.listeners import ROMulticast, TCPListener, UDPListener
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
@@ -33,6 +33,7 @@ class Server:
         self._participating = False
         self._heartbeats = {}
         self._heartbeat_timer = None
+        self.entries = 0
 
         self._setup_connections()
 
@@ -57,7 +58,7 @@ class Server:
             self._register_server(data)
 
         elif data["intention"] == IDENT_CLIENT:
-            self._logger.debug(f"TODO: {data}")
+            self._register_client(data, addr)
 
         elif data["intention"] == SHUTDOWN_SERVER:
             add = "(leader)" if data["uuid"] == self._current_leader else ""
@@ -84,9 +85,14 @@ class Server:
             self._distribute_group_view()
         elif res["intention"] == HEARTBEAT:
             self._on_received_heartbeat(res)
+        elif res["intention"] == REQUEST_ENTRY:
+            self._on_request_entry(res)
 
     def _on_rom_msg(self, data=None):
-        self._logger.debug(f"TODO: Do something with rom message: {data}")
+        if data["intention"] == ACCEPT_CLIENT:
+            self._on_entry_request_rom(data)
+        else:
+            self._logger.debug(f"TODO: Do something with rom message: {data}")
 
     # group view methods ------------------------------------------------------
 
@@ -360,6 +366,76 @@ class Server:
             self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, self._send_heartbeat)
             self._heartbeat_timer.start()
 
+    def _register_client(self, data, addr):
+        mes = {
+            "intention": ACCEPT_CLIENT,
+            "uuid": self._uuid,
+            "address": self._tcp_listener.address,
+            "port": self._tcp_listener.port
+        }
+        self._logger.info(data)
+        self._tcp_listener.send(json.dumps(mes), (data['address'],data['port']))
+
+    def _on_request_entry(self,res):
+        if self.entries >= MAX_ENTRIES:
+            mes = {"uuid": f"{self._uuid}", "intention": DENY_ENTRY}
+            self._tcp_listener.send(json.dumps(mes), (res['address'],res['port']))
+            return
+        mes = {
+            "uuid": f"{self._uuid}",
+            "intention": ACCEPT_CLIENT,
+            "client_uuid": res["uuid"],
+            "client_adr": res['address'],
+            "client_port": res['port']
+        }
+        try:
+            self._rom_listener.send(mes)
+        except ConnectionRefusedError:
+            self._logger.warn("Connection refused when trying to pass on client entry request")
+
+    def _on_entry_request_rom(self, res):
+        if res["uuid"] == self._uuid:
+            mes = {"uuid": f"{self._uuid}"}
+            addOne = False
+            if self.entries >= MAX_ENTRIES:
+                mes["intention"] = DENY_ENTRY
+            else:
+                addOne = True
+                mes["intention"] = ACCEPT_ENTRY
+                mes["entries"] = self.entries+1
+            try:
+                self._tcp_listener.send(json.dumps(mes), (res['client_adr'],res['client_port']))
+                if addOne: self.entries +=1
+            except ConnectionRefusedError:
+                self._logger.warn("Client refused connection when trying to accept it. Did not increase entries!")
+                #TODO this currently means that other servers increase even if this one fails to finish accepting the client
+        else:
+            if self.entries < MAX_ENTRIES: self.entries += 1
+
+    #TODO remove when we are sure this isn't needed
+    def _on_request_entry_old(self, res, addr):
+        mes = {"uuid": f"{self._uuid}"}
+        if self._grant_entry():
+            self._logger.info(f"A client with No. {res['number']} and UUID {res['uuid']} requests entry. Accepting.")
+            mes["intention"] =  ACCEPT_ENTRY
+            mes["entries"] = self.entries
+        else:
+            self._logger.info(f"A client with No. {res['number']} and UUID {res['uuid']} requests entry. Denied, we are full.")
+            mes["intention"] = DENY_ENTRY
+        self._tcp_listener.send(json.dumps(mes), (res['address'],res['port']))
+
+    #TODO remove when we are sure this isn't needed
+    def _grant_entry(self):
+        #TODO lock remote entries
+        if self.entries == None:
+            self.entries = 0
+        if self.entries < MAX_ENTRIES:
+            #TODO use remote entries
+            self.entries += 1
+            return True
+        else:
+            return False
+
     # process methods ---------------------------------------------------------
 
     def _shut_down(self):
@@ -370,7 +446,9 @@ class Server:
 
         self._tcp_listener.join()
         self._udp_listener.join()
+        #TODO currently doesn't work
         self._rom_listener.join()
+        self._logger.info("All listeners shut down, canceling heartbeat timer.")
         self._heartbeat_timer.cancel()
 
         if leader_address and self._current_leader != self._uuid:
