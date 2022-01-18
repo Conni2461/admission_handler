@@ -1,7 +1,6 @@
 import argparse
 import logging
-
-from src.utils.signals import ON_ENTRY_REQUEST
+from random import randint
 
 parser = argparse.ArgumentParser(description="No help")
 parser.add_argument("--server", action="store_true", default=False)
@@ -13,19 +12,20 @@ logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s - %(mess
 
 if args.server:
     from .server.server import Server
-    from .utils.util import RepeatTimer
+    from .utils.common import RepeatTimer
 
     server = Server()
 
-    def send():
-        server._rom_listener.send({"msg": "test"})
+    #def send():
+    #   server._rom_handler.send({"msg": "test"})
 
     #RepeatTimer(5, send).start()
     server.run()
 elif args.client:
     from .client.client import Client
-    from louie import dispatcher
-    number = 0
+    #from louie import dispatcher
+    #TODO do this better, currently only acceptable for testing
+    number = randint(1,100)
     Client(number).run()
 else:
     parser.print_help()

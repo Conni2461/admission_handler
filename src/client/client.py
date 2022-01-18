@@ -1,60 +1,57 @@
-import json
 import logging
-from ntpath import join
-import socket
 import os
 import sys
 import uuid
 
 from louie import dispatcher
+from src.utils.broadcast_handler import BroadcastHandler
+from src.utils.signals import (ON_BROADCAST_MESSAGE, ON_ENTRY_REQUEST,
+                               ON_TCP_MESSAGE)
+from src.utils.tcp_handler import TCPHandler
 
-from src.utils.listeners import TCPListener, UDPListener
-from src.utils.signals import ON_BROADCAST_MESSAGE, ON_ENTRY_REQUEST, ON_TCP_MESSAGE
-
-from ..utils.constants import ACCEPT_CLIENT, ACCEPT_ENTRY, BROADCAST_PORT, DENY_ENTRY, IDENT_CLIENT, MAX_ENTRIES, MAX_TRIES, REQUEST_ENTRY, SHUTDOWN_SERVER, UPDATE_ENTRIES
-from ..utils.constants import BUFFER_SIZE
-from ..utils.constants import CLIENT_BASE_PORT
-from ..utils.util import broadcast
+from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, DENY_ENTRY,
+                               IDENT_CLIENT, MAX_ENTRIES, MAX_TRIES,
+                               REQUEST_ENTRY, SHUTDOWN_SERVER, SHUTDOWN_SYSTEM, UPDATE_ENTRIES)
 
 
 class Client:
     def __init__(self, number):
-        self._tcp_listener = TCPListener()
-        self._udp_listener = UDPListener()
+        """Set up handlers, uuid etc."""
+        self._tcp_listener = TCPHandler()
+        self._broadcast_handler = BroadcastHandler()
         self._uuid = str(uuid.uuid4())
-        # for calling and verifying purposes
+        # a human readable number for calling and verifying purposes
         self.number = number
         self.entries = None
         self.server = None
         self._logger = logging.getLogger(f"Client No. {self.number}") # with UUID {self._uuid}")
         self._logger.setLevel(logging.DEBUG)
 
-        self._setup_connections()
-
-    def _setup_connections(self):
         dispatcher.connect(
             self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener
         )
         dispatcher.connect(
-            self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._udp_listener
+            self._on_broadcast, signal=ON_BROADCAST_MESSAGE, sender=self._broadcast_handler
         )
         dispatcher.connect(
             self._on_entry_request, signal=ON_ENTRY_REQUEST, sender=self.number
         )
 
     def find_server(self):
+        """Broadcast this clients existence to the system and register the first server that answers."""
         mes = {
             "intention": IDENT_CLIENT,
             "uuid": f"{self._uuid}",
             "address": self._tcp_listener.address,
             "port": self._tcp_listener.port,
         }
-        broadcast(BROADCAST_PORT, mes)
+        self._broadcast_handler.send(mes)
 
+        #TODO potentially include this in normal tcp listening routine
         for _ in range(MAX_TRIES):
-            res, add = self._tcp_listener.listen(1)
-            if res is not None:
-                data = json.loads(res)
+            data, add = self._tcp_listener.listen()
+            if data is not None:
+                self._logger.debug(data)
                 if data.get("intention") == ACCEPT_CLIENT:
                     self._logger.debug(f"Recieved client accept message {data} from {add}")
                     self.server = (data.get("address"),data.get("port"))
@@ -62,71 +59,63 @@ class Client:
 
     def _on_entry_request(self):
         if self.server == None:
-            self._logger.debug(f"Client No. {self.number} asked to request entry, but didn't have a server.")
+            self._logger.debug(f"Client No. {self.number} asked to request entry, but didn't have a server. Please try again.")
         else:
-            mes = json.dumps({
+            mes = {
                 "intention": REQUEST_ENTRY,
                 "uuid": f"{self._uuid}",
                 "address": self._tcp_listener.address,
                 "port": self._tcp_listener.port,
                 "number": self.number
-            })
-            len = mes.encode().__len__()
-            for _ in range(MAX_TRIES):
-                try:
-                    res = self._tcp_listener.send(mes, self.server)
-                except ConnectionRefusedError:
-                    self._logger.warn(f"Client No. {self.number} was refused when trying to connect to its server, will look for a new one.")
-                    self.server = None
-                    self.find_server()
-                    return
-                if res != len:
-                    self._logger.warn(f"Client No. {self.number} was unable to send a complete message! Retrying.")
-                else:
-                    self._logger.debug("Success! Waiting for response")
-                    return
-            self._logger.warn(f"Client No. {self.number} discarding current server, connection seems to be malfunctioning.")
-            self.server = None
-            self.find_server()
+            }
+            success = self._tcp_listener.send(mes, self.server)
+            if success:
+                self._logger.debug("Success! Waiting for response")
+            else:
+                self._logger.warn(f"Client No. {self.number} discarding current server, connection seems to be malfunctioning.")
+                self.server = None
+                self.find_server()
 
-    def _on_udp_msg(self, data=None, addr=None):
-        #TODO Actually send this
-        if data["intention"] == UPDATE_ENTRIES:
-            self.entries = data["entries"]
-            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
+    #TODO potentially discard address in the handler
+    def _on_broadcast(self, data=None, addr=None):
+        if data["intention"] == SHUTDOWN_SYSTEM:
+            self._shut_down()
 
     def _on_tcp_msg(self, data=None, addr=None):
-        res = json.loads(data)
-        #TODO actually send this
-        if res["intention"] == SHUTDOWN_SERVER:
+        if data["intention"] == SHUTDOWN_SERVER:
             self.server == None
             self.find_server()
-        elif res["intention"] == ACCEPT_CLIENT:
-            self._logger.info(f"Received random client accept message: {res}")
-        elif res["intention"] == ACCEPT_ENTRY:
+        elif data["intention"] == ACCEPT_CLIENT:
+            self._logger.info(f"Received random client accept message: {data}")
+        elif data["intention"] == ACCEPT_ENTRY:
             self._logger.info("Entry granted, please enjoy yourself!")
-            self.entries = res["entries"]
+            self.entries = data["entries"]
+            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")  
+        elif data["intention"] == UPDATE_ENTRIES:
+            #TODO actually send this
+            self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
-        elif res["intention"] == DENY_ENTRY:
+        elif data["intention"] == DENY_ENTRY:
             self._logger.info("Entry denied. Seems like we are full, sorry.")
             #TODO shut this client down here?
     
     def _shut_down(self):
         self._tcp_listener.join()
-        self._udp_listener.join()
+        self._broadcast_handler.join()
 
     def run(self):
+        #TODO potentially make less spammy and include in normal routine
         while self.server == None:
             self._logger.debug(f"Client {self.number} trying to find a server.")
             self.find_server()
 
         self._logger.debug(f"Connected to server {self.server}")
         self._tcp_listener.start()
-        self._udp_listener.start()
+        self._broadcast_handler.start()
 
         try:
             while True:
-                input("Please enter anything to send a request")
+                input("Please enter anything to send a request\n")
                 #TODO outsource this?
                 dispatcher.send(
                     signal=ON_ENTRY_REQUEST,

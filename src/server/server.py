@@ -6,91 +6,105 @@ import sys
 import uuid
 
 from louie import dispatcher
+from src.utils.broadcast_handler import BroadcastHandler
+from src.utils.rom_handler import ROMulticastHandler
+from src.utils.tcp_handler import TCPHandler
 
-from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER, BROADCAST_PORT, DENY_ENTRY, ELECTION_MESSAGE,
-                               HEARTBEAT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
-                               IDENT_SERVER, MAX_ENTRIES, MAX_TIMEOUTS, MAX_TRIES, REQUEST_ENTRY,
-                               SHUTDOWN_SERVER, UPDATE_GROUP_VIEW, State)
-from ..utils.listeners import ROMulticast, TCPListener, UDPListener
+from ..utils.common import CircularList, RepeatTimer
+from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
+                               DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT,
+                               HEARTBEAT_TIMEOUT, IDENT_CLIENT, IDENT_SERVER,
+                               MAX_ENTRIES, MAX_TIMEOUTS, MAX_TRIES,
+                               REQUEST_ENTRY, REVERT_ENTRY, SHUTDOWN_SERVER,
+                               UPDATE_GROUP_VIEW, State)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
                              ON_TCP_MESSAGE)
-from ..utils.util import CircularList, CustomLogger, RepeatTimer, broadcast
 
 logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.DEBUG)
 
 
 class Server:
     def __init__(self):
+        """Set up handlers, uuid etc."""
         self._state = State.PENDING
-        self._tcp_listener = TCPListener()
-        self._udp_listener = UDPListener()
         self._uuid = str(uuid.uuid4())
         self._group_view = dict()
-        self._rom_listener = ROMulticast(str(self._uuid), self._group_view)
         self._current_leader = None
-        self._logger = logging.getLogger(f"Server {self._uuid}")
-        self._logger.setLevel(logging.DEBUG)
         self._participating = False
         self._heartbeats = {}
         self._heartbeat_timer = None
-        self.entries = 0
 
-        self._setup_connections()
+        self._tcp_handler = TCPHandler()
+        self._broadcast_handler = BroadcastHandler()
+        self._rom_handler = ROMulticastHandler(str(self._uuid), self._group_view)
 
-    def _setup_connections(self):
+        self._logger = logging.getLogger(f"Server {self._uuid}")
+        self._logger.setLevel(logging.DEBUG)
+
+        self._clients = dict()
+        self._entries = 0
+
         dispatcher.connect(
-            self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener
+            self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_handler
         )
         dispatcher.connect(
-            self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._udp_listener
+            self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._broadcast_handler
         )
         dispatcher.connect(
-            self._on_rom_msg, signal=ON_MULTICAST_MESSAGE, sender=self._rom_listener
+            self._on_rom_msg, signal=ON_MULTICAST_MESSAGE, sender=self._rom_handler
         )
 
     # network message handler methods -----------------------------------------
 
     def _on_udp_msg(self, data=None, addr=None):
+        if data == None:
+            self._logger.warn("Got called for an empty Broadcast message!")
+            return
         if data.get("uuid") == self._uuid:
             return
-
         if (data["intention"] == IDENT_SERVER) and (self._state == State.LEADER):
             self._register_server(data)
-
         elif data["intention"] == IDENT_CLIENT:
-            self._register_client(data, addr)
-
+            self._register_client(data)
         elif data["intention"] == SHUTDOWN_SERVER:
             add = "(leader)" if data["uuid"] == self._current_leader else ""
             self._logger.debug(
                 f"Received shutdown message from {data['uuid']}{add}, will start an election."
             )
             self._start_election()
-
         else:
-            self._logger.debug(f"Received broadcast message: {data} from {addr}")
+            self._logger.debug(f"Received broadcast message: {data}")
 
     def _on_tcp_msg(self, data=None, addr=None):
-        res = json.loads(data)
-        if res["intention"] == UPDATE_GROUP_VIEW:
-            self._on_received_grp_view(res)
-        elif res["intention"] == ELECTION_MESSAGE:
-            self._on_election_message(res)
-        elif res["intention"] == SHUTDOWN_SERVER:
-            self._group_view.pop(res["uuid"])
-            self._heartbeats.pop(res["uuid"])
+        if data == None:
+            self._logger.warn("Got called for an empty TCP message!")
+            return
+        if data["intention"] == UPDATE_GROUP_VIEW:
+            self._on_received_grp_view(data)
+        elif data["intention"] == ELECTION_MESSAGE:
+            self._on_election_message(data)
+        elif data["intention"] == SHUTDOWN_SERVER:
+            self._group_view.pop(data["uuid"])
+            self._heartbeats.pop(data["uuid"])
             self._logger.debug(
-                f"Received shutdown message from sever {res['uuid']}. Removing from group view."
+                f"Received shutdown message from sever {data['uuid']}. Removing from group view."
             )
             self._distribute_group_view()
-        elif res["intention"] == HEARTBEAT:
-            self._on_received_heartbeat(res)
-        elif res["intention"] == REQUEST_ENTRY:
-            self._on_request_entry(res)
+        elif data["intention"] == HEARTBEAT:
+            self._on_received_heartbeat(data)
+        elif data["intention"] == REQUEST_ENTRY:
+            self._on_request_entry(data)
 
     def _on_rom_msg(self, data=None):
-        if data["intention"] == ACCEPT_CLIENT:
+        if data == None:
+            self._logger.warn("Got called for an empty ROM message!")
+            return
+        elif data["intention"] == ACCEPT_CLIENT:
             self._on_entry_request_rom(data)
+        elif data["intention"] == REVERT_ENTRY:
+            if data["uuid"] != self._uuid:
+                self._logger.debug("Received a revert message, decreasing entries by 1!")
+                self._entries -= 1
         else:
             self._logger.debug(f"TODO: Do something with rom message: {data}")
 
@@ -100,23 +114,21 @@ class Server:
         self._logger.debug(
             f"Distributing group view to {len(self._group_view.keys())-1} members."
         )
-        self._rom_listener.set_group_view(self._group_view)
+        self._rom_handler.set_group_view(self._group_view)
         for uuid, address in self._group_view.items():
             if uuid != self._uuid:
                 data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
-                try:
-                    self._tcp_listener.send(json.dumps(data), address)
-                except ConnectionRefusedError as e:
-                    self._logger.warning(f"Could not send group view to: {uuid} - {e}.")
+                if not self._tcp_handler.send(data, address):
+                    self._logger.warning(f"Could not send group view to: {uuid}.")
 
     def _on_received_grp_view(self, data):
         group_view = {}
         for key, value in data["group_view"].items():
             group_view[key] = tuple(value)
         for new_member in set(group_view.keys()) - set(self._group_view.keys()):
-            self._rom_listener.register_new_member(new_member)
+            self._rom_handler.register_new_member(new_member)
         self._group_view = group_view
-        self._rom_listener.set_group_view(self._group_view)
+        self._rom_handler.set_group_view(self._group_view)
         self._logger.debug(
             f"Received updated group view with {len(list(self._group_view.keys()))} items."
         )
@@ -125,17 +137,16 @@ class Server:
         mes = {
             "intention": IDENT_SERVER,
             "uuid": f"{self._uuid}",
-            "address": self._tcp_listener.address,
-            "port": self._tcp_listener.port,
+            "address": self._tcp_handler.address,
+            "port": self._tcp_handler.port
         }
 
         self._logger.debug("Requesting join.")
-        broadcast(BROADCAST_PORT, mes)
+        self._broadcast_handler.send(mes)
 
         for _ in range(MAX_TRIES):
-            res, add = self._tcp_listener.listen(1)
-            if res is not None:
-                data = json.loads(res)
+            data, _ = self._tcp_handler.listen()
+            if data is not None:
                 if data.get("intention") == ACCEPT_SERVER:
                     self._state = State.MEMBER
                     self._current_leader = data.get("leader")
@@ -144,7 +155,7 @@ class Server:
                         f"I have been accepted by leader {self._current_leader}. Group view has been populated."
                     )
                     self._set_leader(False)
-                    self._rom_listener.sync_state(
+                    self._rom_handler.sync_state(
                         json.loads(data.get("rnumbers")),
                         json.loads(data.get("deliver_queue")),
                     )
@@ -156,10 +167,10 @@ class Server:
             )
             self._set_leader(True)
             self._group_view[self._uuid] = (
-                self._tcp_listener.address,
-                self._tcp_listener.port,
+                self._tcp_handler.address,
+                self._tcp_handler.port,
             )
-            self._rom_listener.set_group_view(self._group_view)
+            self._rom_handler.set_group_view(self._group_view)
 
         self._logger.debug(f"In Request Join: {self._state}, {self._group_view}")
 
@@ -170,15 +181,15 @@ class Server:
             "intention": ACCEPT_SERVER,
             "leader": f"{self._uuid}",
             "group_view": self._group_view,
-            "rnumbers": json.dumps(self._rom_listener._rnumbers),
-            "deliver_queue": json.dumps(self._rom_listener._deliver_queue),
+            "rnumbers": json.dumps(self._rom_handler._rnumbers),
+            "deliver_queue": json.dumps(self._rom_handler._deliver_queue),
             # "buisness_data": TODO send the current state of the system to the new member
         }
 
-        self._rom_listener.register_new_member(data["uuid"])
-        self._tcp_listener.send(
-            json.dumps(welcome_msg), self._group_view[data["uuid"]]
-        )
+        self._rom_handler.register_new_member(data["uuid"])
+        if not self._tcp_handler.send(welcome_msg, self._group_view[data["uuid"]]):
+            #TODO handle this case?
+            self._logger.warn("Added a server to my groupview but was unable to send it a welcome message!")
         self._logger.debug(
             "Received server join request from {}".format(
                 (data["address"], data["port"])
@@ -236,13 +247,9 @@ class Server:
                 success = True
                 continue
             prev_neighbor = neighbor
-            try:
-                self._tcp_listener.send(json.dumps(message), self._group_view[neighbor])
-                success = True
-            except ConnectionRefusedError as e:
-                self._logger.warning(
-                    f"Could not send election message to {neighbor}: {e}."
-                )
+            success = self._tcp_handler.send(message, self._group_view[neighbor])
+            if not success:
+                self._logger.warning(f"Could not send election message to {neighbor}.")
 
     def _on_election_message(self, data):
         self._logger.debug(f"Received Election Message from {data['mid']}")
@@ -300,14 +307,8 @@ class Server:
     def _send_heartbeat(self):
         if not self._participating:
             msg = {"intention": HEARTBEAT, "uuid": f"{self._uuid}"}
-            try:
-                self._tcp_listener.send(
-                    json.dumps(msg), self._group_view[self._current_leader]
-                )
-            except ConnectionRefusedError:
-                self._logger.warning(
-                    "Leader seems to be offline, starting new election."
-                )
+            if not self._tcp_handler.send(msg, self._group_view[self._current_leader]):
+                self._logger.warning("Leader seems to be offline, starting new election.")
                 self._start_election()
         else:
             self._logger.debug("Not sending heartbeat because I am participating in an election.")
@@ -366,21 +367,20 @@ class Server:
             self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, self._send_heartbeat)
             self._heartbeat_timer.start()
 
-    def _register_client(self, data, addr):
+    def _register_client(self, data):
         mes = {
             "intention": ACCEPT_CLIENT,
             "uuid": self._uuid,
-            "address": self._tcp_listener.address,
-            "port": self._tcp_listener.port
+            "address": self._tcp_handler.address,
+            "port": self._tcp_handler.port
         }
-        self._logger.info(data)
-        self._tcp_listener.send(json.dumps(mes), (data['address'],data['port']))
+        self._logger.debug(f"Trying to register a client with uuid {data['uuid']}")
+        if self._tcp_handler.send(mes, (data['address'],data['port'])):
+            self._clients[data["uuid"]] = (data['address'],data['port'])
+        else:
+            self._logger.warn("Failed to accept a client, seems to have already disappeared again!")
 
     def _on_request_entry(self,res):
-        if self.entries >= MAX_ENTRIES:
-            mes = {"uuid": f"{self._uuid}", "intention": DENY_ENTRY}
-            self._tcp_listener.send(json.dumps(mes), (res['address'],res['port']))
-            return
         mes = {
             "uuid": f"{self._uuid}",
             "intention": ACCEPT_CLIENT,
@@ -389,49 +389,41 @@ class Server:
             "client_port": res['port']
         }
         try:
-            self._rom_listener.send(mes)
+            self._logger.debug(f"Sending entry request rom")
+            self._rom_handler.send(mes)
         except ConnectionRefusedError:
             self._logger.warn("Connection refused when trying to pass on client entry request")
 
     def _on_entry_request_rom(self, res):
+        self._logger.debug(f"Received an entry request rom!")
         if res["uuid"] == self._uuid:
             mes = {"uuid": f"{self._uuid}"}
             addOne = False
-            if self.entries >= MAX_ENTRIES:
+            if self._entries >= MAX_ENTRIES:
                 mes["intention"] = DENY_ENTRY
             else:
                 addOne = True
                 mes["intention"] = ACCEPT_ENTRY
-                mes["entries"] = self.entries+1
-            try:
-                self._tcp_listener.send(json.dumps(mes), (res['client_adr'],res['client_port']))
-                if addOne: self.entries +=1
-            except ConnectionRefusedError:
-                self._logger.warn("Client refused connection when trying to accept it. Did not increase entries!")
-                #TODO this currently means that other servers increase even if this one fails to finish accepting the client
+                mes["entries"] = self._entries+1
+            if self._tcp_handler.send(mes, (res['client_adr'],res['client_port'])):
+                self._logger.debug("Successfully sent the message, will increase if applicable!")
+                if addOne: self._entries +=1
+            else:
+                self._logger.warn("Accepting entry request failed! Sending decrease request!")
+                self._rom_handler.send({"intention": REVERT_ENTRY, "uuid": f"{self._uuid}"})
         else:
-            if self.entries < MAX_ENTRIES: self.entries += 1
-
-    #TODO remove when we are sure this isn't needed
-    def _on_request_entry_old(self, res, addr):
-        mes = {"uuid": f"{self._uuid}"}
-        if self._grant_entry():
-            self._logger.info(f"A client with No. {res['number']} and UUID {res['uuid']} requests entry. Accepting.")
-            mes["intention"] =  ACCEPT_ENTRY
-            mes["entries"] = self.entries
-        else:
-            self._logger.info(f"A client with No. {res['number']} and UUID {res['uuid']} requests entry. Denied, we are full.")
-            mes["intention"] = DENY_ENTRY
-        self._tcp_listener.send(json.dumps(mes), (res['address'],res['port']))
+            if self._entries < MAX_ENTRIES:
+                self._logger("Not from me, increasing entries!")
+                self._entries += 1
 
     #TODO remove when we are sure this isn't needed
     def _grant_entry(self):
         #TODO lock remote entries
-        if self.entries == None:
-            self.entries = 0
-        if self.entries < MAX_ENTRIES:
+        if self._entries == None:
+            self._entries = 0
+        if self._entries < MAX_ENTRIES:
             #TODO use remote entries
-            self.entries += 1
+            self._entries += 1
             return True
         else:
             return False
@@ -444,24 +436,24 @@ class Server:
 
         msg = {"intention": SHUTDOWN_SERVER, "uuid": f"{self._uuid}"}
 
-        self._tcp_listener.join()
-        self._udp_listener.join()
+        self._tcp_handler.join()
+        self._broadcast_handler.join()
         #TODO currently doesn't work
-        self._rom_listener.join()
+        self._rom_handler.join()
         self._logger.info("All listeners shut down, canceling heartbeat timer.")
         self._heartbeat_timer.cancel()
 
         if leader_address and self._current_leader != self._uuid:
-            self._tcp_listener.send(json.dumps(msg), leader_address)
+            self._tcp_handler.send(msg, leader_address)
         else:
-            broadcast(BROADCAST_PORT, msg)
+            self._broadcast_handler.send(msg)
 
     def run(self):
 
         self._request_join()
-        self._tcp_listener.start()
-        self._udp_listener.start()
-        self._rom_listener.start()
+        self._tcp_handler.start()
+        self._broadcast_handler.start()
+        self._rom_handler.start()
 
         try:
             while True:
