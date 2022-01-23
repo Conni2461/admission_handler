@@ -22,6 +22,8 @@ ELECTION_MESSAGE = "ElectionMessage"
 HEARTBEAT = "Heartbeat"
 MONITOR_MESSAGE = "Monitor"
 PING = "Ping"
+OM = "OM"
+OM_RESULT = "OMResult"
 TIMEOUT = 0.1
 MAX_TRIES = 3
 MAX_ENTRIES = 20
@@ -42,3 +44,5 @@ class Purpose(Enum):
     PROP_SEQ = 1
     FIN_SEQ = 2
     NACK = 3
+    STOP = 4
+    RESUME = 5

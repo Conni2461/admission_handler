@@ -4,20 +4,23 @@ import logging
 import os
 import sys
 import uuid
+import math
 from copy import deepcopy
+from collections import Counter
 
 from louie import dispatcher
 from src.utils.broadcast_handler import BroadcastHandler
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
+from src.utils.bzantine_tree import BzantineTree
 
 from ..utils.common import CircularList, RepeatTimer
 from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
-                               DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT,
-                               HEARTBEAT_TIMEOUT, IDENT_CLIENT, IDENT_SERVER,
-                               LOGGING_LEVEL, MAX_ENTRIES, MAX_TIMEOUTS,
-                               MAX_TRIES, MONITOR_MESSAGE, PING, REQUEST_ENTRY,
-                               REVERT_ENTRY, SHUTDOWN_SERVER,
+                               DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT, OM,
+                               OM_RESULT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
+                               IDENT_SERVER, LOGGING_LEVEL, MAX_ENTRIES,
+                               MAX_TIMEOUTS, MAX_TRIES, MONITOR_MESSAGE, PING,
+                               REQUEST_ENTRY, REVERT_ENTRY, SHUTDOWN_SERVER,
                                UPDATE_GROUP_VIEW, State)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_HEARTBEAT_TIMEOUT,
                              ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE)
@@ -44,6 +47,10 @@ class Server:
 
         self._clients = dict()
         self._entries = 0
+
+        self._bzantine_tree = None
+        self._bzantine_results = None
+        self._bzantine_results_counter = None
 
         dispatcher.connect(
             self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_handler
@@ -109,11 +116,18 @@ class Server:
         elif data.get("intention") == ACCEPT_SERVER:
             self._on_accepted(data)
             self._promote_monitoring_data()
+        elif data["intention"] == OM:
+            if "v" not in data:
+                self._stop_bzantine(data)
+            else:
+                self._on_bzantine_om(data)
 
     def _on_rom_msg(self, data=None):
         if data == None:
             self._logger.warn("Got called for an empty ROM message!")
             return
+        elif data["intention"] == OM_RESULT:
+            self._entries = data["result"]
         elif data["intention"] == ACCEPT_CLIENT:
             self._on_entry_request_rom(data)
         elif data["intention"] == REVERT_ENTRY:
@@ -230,6 +244,9 @@ class Server:
             self._start_election()
         else:
             self._logger.debug("No election required.")
+            if self._can_bzantine():
+                self._rom_handler.pause()
+                self._start_bzantine()
 
     # election methods --------------------------------------------------------
 
@@ -275,6 +292,84 @@ class Server:
             if not success:
                 self._logger.warning(f"Could not send election message to {neighbor}.")
 
+    def _can_bzantine(self):
+        n = len(self._group_view)
+        f = math.floor((n - 1) / 3)
+        return f > 0
+
+    def _start_bzantine(self):
+        v = self._entries
+        n = len(self._group_view)
+        f = math.floor((n - 1) / 3)
+        if f == 0:
+            return
+
+        self._logger.info("Starting bzantine algorithm")
+        dests = list(set(self._group_view.keys()) - set([self._uuid]))
+        om = {
+            "intention": OM,
+            "v": v,
+            "dests": dests,
+            "list": [self._uuid],
+            "faulty": f,
+        }
+        for uuid in dests:
+            if not self._tcp_handler.send(om, self._group_view[uuid]):
+                self._logger.warning(f"Could not send om to: {uuid}.")
+
+    def _stop_bzantine(self, om):
+        if self._bzantine_results == None:
+            self._bzantine_results = []
+        if self._bzantine_results_counter == None:
+            self._bzantine_results_counter = Counter()
+        self._bzantine_results.append(om["from"])
+        self._bzantine_results_counter[om["result"]] += 1
+        leader_less_group = set(self._group_view.keys()) - set([self._uuid])
+        missing = leader_less_group - set(self._bzantine_results)
+        if len(missing) == 0:
+            self._logger.info(f"Stopping bzantine algorithm")
+            mc = self._bzantine_results_counter.most_common()
+            self._logger.info("Resuming ROM")
+            self._bzantine_results = None
+            self._bzantine_results_counter = None
+            self._entries = mc[0][0]
+            self._rom_handler.resume(value=mc[0][0])
+
+    def _on_bzantine_om(self, om):
+        self._logger.debug(f"Received bzantine message: {om}")
+        if self._bzantine_tree == None:
+            self._bzantine_tree = BzantineTree(len(self._group_view))
+
+        if not self._bzantine_tree.is_full():
+            dests = list(set(om["dests"]) - set([self._uuid]))
+            l = om["list"]
+            f = om["faulty"]
+            self._bzantine_tree.push(deepcopy(l), om["v"])
+            if f - 1 >= 0:
+                l.insert(0, self._uuid)
+                om_new = {
+                    "intention": OM,
+                    "v": self._entries,
+                    "dests": dests,
+                    "list": l,
+                    "faulty": f - 1
+                }
+                for uuid in dests:
+                    if not self._tcp_handler.send(om_new, self._group_view[uuid]):
+                        self._logger.warning(f"Could not send om to: {uuid}.")
+
+        # Are we now done? Then complete the algorithm
+        if self._bzantine_tree.is_full():
+            res = self._bzantine_tree.complete()
+            self._bzantine_tree = None
+            om_new = {
+                "intention": OM,
+                "from": self._uuid,
+                "result": res
+            }
+            if not self._tcp_handler.send(om_new, self._group_view[self._current_leader]):
+                self._logger.warning(f"Could not send stop om to current leader")
+
     def _on_election_message(self, data):
         self._logger.debug(f"Received an Election Message from {data['mid']}")
         neighbor = self._get_neighbor()
@@ -308,6 +403,9 @@ class Server:
                 self._group_view = group_view
 
                 self._distribute_group_view()
+                if self._can_bzantine():
+                    self._rom_handler.pause()
+                    self._start_bzantine()
             self._promote_monitoring_data()
 
             return

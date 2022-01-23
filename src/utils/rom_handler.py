@@ -7,11 +7,12 @@ import socket
 import struct
 import sys
 import uuid
+import queue
 
 from louie import dispatcher
 from src.utils.common import SocketThread
 from src.utils.constants import (LOGGING_LEVEL, MULTICAST_IP, MULTICAST_PORT,
-                                 TIMEOUT, Purpose)
+                                 TIMEOUT, OM_RESULT, Purpose)
 from src.utils.signals import ON_MULTICAST_MESSAGE
 
 
@@ -32,6 +33,9 @@ class ROMulticastHandler(SocketThread):
 
         self._aq = 0  # Largest agreed seqeunce number
         self._pq = 0  # Largest proposed sequence number
+
+        self._paused_queue = queue.Queue()
+        self._paused = False
 
         self._listener_socket = socket.socket(
             socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
@@ -76,6 +80,23 @@ class ROMulticastHandler(SocketThread):
         self._rnumbers.update(rnumbers)
         self._deliver_queue.update(deliver_queue)
 
+    def pause(self, sendout=True):
+        if not self._paused:
+            self._logger.info("pausing rom")
+        self._paused = True
+        if sendout:
+            self.send({"purpose": str(Purpose.STOP)})
+
+    def resume(self, value=0, sendout=True):
+        if self._paused:
+            self._logger.info("resuming rom")
+        self._paused = False
+        if sendout:
+            self.send({"purpose": str(Purpose.RESUME), "value": value})
+
+        while not self._paused_queue.empty():
+            self._send(self._paused_queue.get())
+
     def _send(self, mesg: dict):
         mesg["sender"] = self._name
         self._snumber += 1
@@ -102,6 +123,13 @@ class ROMulticastHandler(SocketThread):
                 self._current_group_view
             )
 
+        if self._paused and (
+            mesg["purpose"] != str(Purpose.STOP)
+            and mesg["purpose"] != str(Purpose.RESUME)
+        ):
+            self._paused_queue.put(mesg)
+            return
+
         self._send(mesg)
 
     def _propose_order(self, data: dict, addr):
@@ -116,7 +144,7 @@ class ROMulticastHandler(SocketThread):
         }
         self._sender_socket.sendto(json.dumps(mesg).encode(), addr)
 
-    def _collect_order_proposals(self, data: dict, addr):
+    def _collect_order_proposals(self, data: dict):
         id = data["mesg_id"]
         pq = data["pq"]
 
@@ -156,6 +184,19 @@ class ROMulticastHandler(SocketThread):
             return
         mesg = self._deliver_queue.pop(id)
         mesg["a"] = a
+
+        if mesg["purpose"] == str(Purpose.STOP):
+            self.stop(False)
+            return
+        elif mesg["purpose"] == str(Purpose.RESUME):
+            self.resume(sendout=False)
+            dispatcher.send(
+                signal=ON_MULTICAST_MESSAGE,
+                sender=self,
+                data={"intention": OM_RESULT, "result": mesg["value"]},
+            )
+            return
+
         dispatcher.send(
             signal=ON_MULTICAST_MESSAGE,
             sender=self,
@@ -165,7 +206,11 @@ class ROMulticastHandler(SocketThread):
     def _process_message(self, data: dict, addr):
         self._rnumbers[data["sender"]] += 1
 
-        if data["purpose"] == str(Purpose.REAL_MSG):
+        if (
+            data["purpose"] == str(Purpose.REAL_MSG)
+            or data["purpose"] == str(Purpose.STOP)
+            or data["purpose"] == str(Purpose.RESUME)
+        ):
             self._propose_order(data, addr)
         elif data["purpose"] == str(Purpose.FIN_SEQ):
             self._deliver_message(data)
@@ -210,7 +255,7 @@ class ROMulticastHandler(SocketThread):
 
     def _handle(self, data: dict, addr):
         if data["purpose"] == str(Purpose.PROP_SEQ):
-            self._collect_order_proposals(data, addr)
+            self._collect_order_proposals(data)
             return
         elif data["purpose"] == str(Purpose.NACK):
             for nack in data["nacks"]:
