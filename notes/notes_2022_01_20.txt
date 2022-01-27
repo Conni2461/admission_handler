@@ -1,0 +1,11 @@
+Meeting 20.1.2022
+Other Groups:
+-> Do we need to store a history of messages on the servers?
+-> During presentation, use multiple webex accounts (for example dummies) to share different screens
+-> and/or show setup using a phone or similar
+Our Group:
+Deal with locking and ordering separately?
+	-> Current solution needs to be reevaluated to see if it really works in all problem cases
+	-> Prof. had the impression that this are two orthogonal problems and we may want to look into them separately
+Server crashes during voting -> simply skipped might not be so simple
+	-> maybe just restart the election in this case (unless that is already how it is implemented)
