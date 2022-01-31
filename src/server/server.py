@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import math
 import os
 import sys
 import uuid
@@ -15,7 +16,8 @@ from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
                                DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT,
                                HEARTBEAT_TIMEOUT, IDENT_CLIENT, IDENT_SERVER,
                                MAX_ENTRIES, MAX_TIMEOUTS, MAX_TRIES,
-                               REQUEST_ENTRY, REVERT_ENTRY, SHUTDOWN_SERVER,
+                               MONITOR_MESSAGE, OM, REQUEST_ENTRY,
+                               REVERT_ENTRY, SHUTDOWN_SERVER,
                                UPDATE_GROUP_VIEW, State)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
                              ON_TCP_MESSAGE)
@@ -71,7 +73,12 @@ class Server:
             self._logger.debug(
                 f"Received shutdown message from {data['uuid']}{add}, will start an election."
             )
-            self._start_election()
+            try:
+                self._group_view.pop(data["uuid"])
+            finally:
+                self._start_election()
+        elif data["intention"] == MONITOR_MESSAGE:
+            pass
         else:
             self._logger.debug(f"Received broadcast message: {data}")
 
@@ -108,6 +115,8 @@ class Server:
         else:
             self._logger.debug(f"TODO: Do something with rom message: {data}")
 
+        self._promote_monitoring_data()
+
     # group view methods ------------------------------------------------------
 
     def _distribute_group_view(self):
@@ -120,6 +129,8 @@ class Server:
                 data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
                 if not self._tcp_handler.send(data, address):
                     self._logger.warning(f"Could not send group view to: {uuid}.")
+
+        self._broadcast_handler.send({"intention": MONITOR_MESSAGE, "group_view": self._group_view})
 
     def _on_received_grp_view(self, data):
         group_view = {}
@@ -174,6 +185,8 @@ class Server:
 
         self._logger.debug(f"In Request Join: {self._state}, {self._group_view}")
 
+        self._promote_monitoring_data()
+
     def _register_server(self, data):
         self._group_view[data["uuid"]] = (data["address"], data["port"])
 
@@ -219,6 +232,7 @@ class Server:
         }
         self._logger.debug(f"Starting election, sending election message to {neighbor}")
         self._participating = True
+        self._promote_monitoring_data()
         self._send_election_message(election_msg)
 
     def _election_required(self):
@@ -274,6 +288,8 @@ class Server:
                 self._logger.debug(
                     "Received my own leader message, will terminate the election."
                 )
+            self._promote_monitoring_data()
+
             return
 
         if data["mid"] < self._uuid and not self._participating:
@@ -306,15 +322,20 @@ class Server:
 
     def _send_heartbeat(self):
         if not self._participating:
-            msg = {"intention": HEARTBEAT, "uuid": f"{self._uuid}"}
+            msg = {"intention": HEARTBEAT, "uuid": f"{self._uuid}", "clients": self._clients, "entries": self._entries}
             if not self._tcp_handler.send(msg, self._group_view[self._current_leader]):
                 self._logger.warning("Leader seems to be offline, starting new election.")
                 self._start_election()
         else:
             self._logger.debug("Not sending heartbeat because I am participating in an election.")
 
+        self._promote_monitoring_data()
+
     def _check_heartbeats(self):
         self._logger.debug("Checking heartbeats.")
+
+        self._promote_monitoring_data()
+
         now = datetime.datetime.now().timestamp()
         remove = []
         for uuid in self._group_view.keys():
@@ -337,8 +358,10 @@ class Server:
 
         if remove:
             for uid in remove:
-                self._group_view.pop(uid)
-                self._heartbeats.pop(uid)
+                if uid in self._group_view:
+                    self._group_view.pop(uid)
+                if uid in self._heartbeats:
+                    self._heartbeats.pop(uid)
             self._distribute_group_view()
 
     def _on_received_heartbeat(self, data):
@@ -351,6 +374,10 @@ class Server:
             )
 
     # other methods -----------------------------------------------------------
+
+    def _promote_monitoring_data(self):
+        msg = {"intention": MONITOR_MESSAGE, "uuid": self._uuid, "clients": self._clients, "election": self._participating, "state": self._state.name, "entries": self._entries}
+        self._broadcast_handler.send(msg)
 
     def _set_leader(self, state=True):
         if state:
@@ -376,11 +403,12 @@ class Server:
         }
         self._logger.debug(f"Trying to register a client with uuid {data['uuid']}")
         if self._tcp_handler.send(mes, (data['address'],data['port'])):
-            self._clients[data["uuid"]] = (data['address'],data['port'])
+            pass
         else:
             self._logger.warn("Failed to accept a client, seems to have already disappeared again!")
 
     def _on_request_entry(self,res):
+        self._clients[res["uuid"]] = (res['address'],res['port'])
         mes = {
             "uuid": f"{self._uuid}",
             "intention": ACCEPT_CLIENT,
@@ -434,6 +462,8 @@ class Server:
         self._logger.info("Shutting down.")
         leader_address = self._group_view.get(self._current_leader)
 
+        self._broadcast_handler.send({"intention": MONITOR_MESSAGE, "uuid": self._uuid, "leaving": True})
+
         msg = {"intention": SHUTDOWN_SERVER, "uuid": f"{self._uuid}"}
 
         self._tcp_handler.join()
@@ -447,6 +477,7 @@ class Server:
             self._tcp_handler.send(msg, leader_address)
         else:
             self._broadcast_handler.send(msg)
+
 
     def run(self):
 

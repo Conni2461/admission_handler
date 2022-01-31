@@ -1,5 +1,6 @@
 from threading import Thread, Timer
 
+
 class SocketThread(Thread):
     def __init__(self, *args, **kwargs):
         super().__init__()

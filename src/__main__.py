@@ -5,6 +5,7 @@ from random import randint
 parser = argparse.ArgumentParser(description="No help")
 parser.add_argument("--server", action="store_true", default=False)
 parser.add_argument("--client", action="store_true", default=False)
+parser.add_argument("--monitor", action="store_true", default=False)
 
 args = parser.parse_args()
 
@@ -23,9 +24,13 @@ if args.server:
     server.run()
 elif args.client:
     from .client.client import Client
+
     #from louie import dispatcher
     #TODO do this better, currently only acceptable for testing
     number = randint(1,100)
     Client(number).run()
+elif args.monitor:
+    from .utils import monitor
+    monitor.start_monitor()
 else:
     parser.print_help()

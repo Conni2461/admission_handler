@@ -19,6 +19,7 @@ DENY_ENTRY = "DenyEntry"
 REVERT_ENTRY = "RevertEntry"
 ELECTION_MESSAGE = "ElectionMessage"
 HEARTBEAT = "Heartbeat"
+MONITOR_MESSAGE = "Monitor"
 TIMEOUT = 0.1
 MAX_TRIES = 3
 MAX_ENTRIES = 100
