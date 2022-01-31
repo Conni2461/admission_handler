@@ -21,8 +21,14 @@ class Monitor(QtWidgets.QDialog):
         lyt = QtWidgets.QVBoxLayout(self)
 
         self._model = QtGui.QStandardItemModel()
+
+        self._model.setHorizontalHeaderLabels(["Server", "Clients", "Entries", "Participating", "State"])
+
         self._view = QtWidgets.QTableView()
         self._view.setModel(self._model)
+        self._view.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self._view.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        self._view.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         lyt.addWidget(self._view)
 
         self._broadcast_handler.start()
@@ -52,7 +58,6 @@ class Monitor(QtWidgets.QDialog):
         for item in self._model.findItems(uuid):
             row = self._model.indexFromItem(item).row()
             self._model.removeRow(row)
-
 
     def _add_server(self, server):
         item = QtGui.QStandardItem(server["uuid"])
