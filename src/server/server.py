@@ -5,6 +5,7 @@ import math
 import os
 import sys
 import uuid
+from copy import deepcopy
 
 from louie import dispatcher
 from src.utils.broadcast_handler import BroadcastHandler
@@ -16,6 +17,9 @@ from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
                                DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT,
                                HEARTBEAT_TIMEOUT, IDENT_CLIENT, IDENT_SERVER,
                                LOGGING_LEVEL, MAX_ENTRIES, MAX_TIMEOUTS,
+                               MAX_TRIES, MONITOR_MESSAGE, PING, REQUEST_ENTRY,
+                               REVERT_ENTRY, SHUTDOWN_SERVER,
+                               UPDATE_GROUP_VIEW, State)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
                              ON_TCP_MESSAGE)
 
@@ -70,9 +74,6 @@ class Server:
             self._logger.debug(
                 f"Received shutdown message from {data['uuid']}{add}, will start an election."
             )
-            try:
-                self._group_view.pop(data["uuid"])
-            finally:
                 self._start_election()
         elif data["intention"] == MONITOR_MESSAGE:
             pass
@@ -222,7 +223,6 @@ class Server:
     # election methods --------------------------------------------------------
 
     def _start_election(self):
-        neighbor = self._get_neighbor()
         election_msg = {
             "intention": ELECTION_MESSAGE,
             "mid": self._uuid,
@@ -288,6 +288,15 @@ class Server:
                 )
 
                 self._logger.info("Updating group view.")
+                group_view = deepcopy(self._group_view)
+
+                for uuid, address in self._group_view.items():
+                    if not self._tcp_handler.send({"intention": PING}, address):
+                        group_view.pop(uuid)
+
+                self._group_view = group_view
+
+                self._distribute_group_view()
             self._promote_monitoring_data()
 
             return
