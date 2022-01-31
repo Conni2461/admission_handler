@@ -82,13 +82,18 @@ class TCPHandler(SocketThread):
         try:
             self._socket.listen()
             conn, addr = self._socket.accept()
+
+            msg_data = ""
+
             while True:
                 res = conn.recv(BUFFER_SIZE)
                 if res:
-                    data = json.loads(res.decode())
+                    msg_data += res.decode()
                     continue
                 else:
                     break
+
+            data = json.loads(msg_data)
             return data, addr
         except socket.timeout:
             return None, None
