@@ -2,14 +2,14 @@ import json
 import logging
 import socket
 import sys
-from collections import deque
 import uuid
+from collections import deque
 
 from louie import dispatcher
-from src.utils.constants import (BROADCAST_PORT, BUFFER_SIZE,
+from src.utils.common import SocketThread
+from src.utils.constants import (BROADCAST_PORT, BUFFER_SIZE, LOGGING_LEVEL,
                                  MAX_MSG_BUFF_SIZE, TIMEOUT)
 from src.utils.signals import ON_BROADCAST_MESSAGE
-from src.utils.common import SocketThread
 
 
 class BroadcastHandler(SocketThread):
@@ -38,9 +38,9 @@ class BroadcastHandler(SocketThread):
         self._msg_buffer = deque([], maxlen=MAX_MSG_BUFF_SIZE)
 
         self._logger = logging.getLogger(f"UDPListener")
-        self._logger.setLevel(logging.DEBUG)
+        self._logger.setLevel(LOGGING_LEVEL)
         self._logger.debug(f"Binding to addr: {':'.join(map(str, socketname))}")
-    
+
     def send(self, msg):
         """Broadcasts json data to all participants."""
         port = BROADCAST_PORT

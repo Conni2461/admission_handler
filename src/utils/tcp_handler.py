@@ -4,8 +4,9 @@ import socket
 import sys
 
 from louie import dispatcher
-from src.utils.constants import BUFFER_SIZE, MAX_TRIES, TIMEOUT, WINDOWS_IP
 from src.utils.common import SocketThread
+from src.utils.constants import (BUFFER_SIZE, LOGGING_LEVEL, MAX_TRIES,
+                                 TIMEOUT, WINDOWS_IP)
 from src.utils.signals import ON_TCP_MESSAGE
 
 
@@ -30,7 +31,7 @@ class TCPHandler(SocketThread):
         self._open = True
 
         self._logger = logging.getLogger(f"TCPListener")
-        self._logger.setLevel(logging.DEBUG)
+        self._logger.setLevel(LOGGING_LEVEL)
         self._logger.debug(f"Binding to addr: {':'.join(map(str, socketname))}")
 
     @property

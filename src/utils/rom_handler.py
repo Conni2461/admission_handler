@@ -10,7 +10,8 @@ import uuid
 
 from louie import dispatcher
 from src.utils.common import SocketThread
-from src.utils.constants import MULTICAST_IP, MULTICAST_PORT, TIMEOUT, Purpose
+from src.utils.constants import (LOGGING_LEVEL, MULTICAST_IP, MULTICAST_PORT,
+                                 TIMEOUT, Purpose)
 from src.utils.signals import ON_MULTICAST_MESSAGE
 
 
@@ -52,7 +53,7 @@ class ROMulticastHandler(SocketThread):
         self._sender_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
 
         self._logger = logging.getLogger("ROMulticast")
-        self._logger.setLevel(logging.DEBUG)
+        self._logger.setLevel(LOGGING_LEVEL)
 
     def set_group_view(self, view):
         self._current_group_view = view

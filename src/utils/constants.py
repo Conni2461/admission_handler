@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 
 BROADCAST_IP = "192.168.0.255"
@@ -27,6 +28,7 @@ BUFFER_SIZE = 1024
 MAX_MSG_BUFF_SIZE = 50
 HEARTBEAT_TIMEOUT = 10  # seconds
 MAX_TIMEOUTS = 2
+LOGGING_LEVEL = logging.INFO
 
 class State(Enum):
     PENDING = 0

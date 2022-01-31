@@ -10,8 +10,9 @@ from src.utils.signals import (ON_BROADCAST_MESSAGE, ON_ENTRY_REQUEST,
 from src.utils.tcp_handler import TCPHandler
 
 from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, DENY_ENTRY,
-                               IDENT_CLIENT, MAX_ENTRIES, MAX_TRIES,
-                               REQUEST_ENTRY, SHUTDOWN_SERVER, SHUTDOWN_SYSTEM, UPDATE_ENTRIES)
+                               IDENT_CLIENT, LOGGING_LEVEL, MAX_ENTRIES,
+                               MAX_TRIES, REQUEST_ENTRY, SHUTDOWN_SERVER,
+                               SHUTDOWN_SYSTEM, UPDATE_ENTRIES)
 
 
 class Client:
@@ -25,7 +26,7 @@ class Client:
         self.entries = None
         self.server = None
         self._logger = logging.getLogger(f"Client No. {self.number}") # with UUID {self._uuid}")
-        self._logger.setLevel(logging.DEBUG)
+        self._logger.setLevel(LOGGING_LEVEL)
 
         dispatcher.connect(
             self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener
@@ -90,7 +91,7 @@ class Client:
         elif data["intention"] == ACCEPT_ENTRY:
             self._logger.info("Entry granted, please enjoy yourself!")
             self.entries = data["entries"]
-            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")  
+            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
         elif data["intention"] == UPDATE_ENTRIES:
             #TODO actually send this
             self.entries = data["entries"]
@@ -98,7 +99,7 @@ class Client:
         elif data["intention"] == DENY_ENTRY:
             self._logger.info("Entry denied. Seems like we are full, sorry.")
             #TODO shut this client down here?
-    
+
     def _shut_down(self):
         self._tcp_listener.join()
         self._broadcast_handler.join()

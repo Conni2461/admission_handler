@@ -15,9 +15,7 @@ from ..utils.common import CircularList, RepeatTimer
 from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
                                DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT,
                                HEARTBEAT_TIMEOUT, IDENT_CLIENT, IDENT_SERVER,
-                               MAX_ENTRIES, MAX_TIMEOUTS, MAX_TRIES,
-                               MONITOR_MESSAGE, REQUEST_ENTRY, REVERT_ENTRY,
-                               SHUTDOWN_SERVER, UPDATE_GROUP_VIEW, State)
+                               LOGGING_LEVEL, MAX_ENTRIES, MAX_TIMEOUTS,
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
                              ON_TCP_MESSAGE)
 
@@ -40,7 +38,7 @@ class Server:
         self._rom_handler = ROMulticastHandler(str(self._uuid), self._group_view)
 
         self._logger = logging.getLogger(f"Server {self._uuid}")
-        self._logger.setLevel(logging.DEBUG)
+        self._logger.setLevel(LOGGING_LEVEL)
 
         self._clients = dict()
         self._entries = 0
@@ -151,13 +149,14 @@ class Server:
             "port": self._tcp_handler.port
         }
 
-        self._logger.debug("Requesting join.")
+        self._logger.info("Looking for a server group.")
         self._broadcast_handler.send(mes)
 
         for _ in range(MAX_TRIES):
             data, _ = self._tcp_handler.listen()
             if data is not None:
                 if data.get("intention") == ACCEPT_SERVER:
+                    self._logger.info("Found a group leader.")
                     self._state = State.MEMBER
                     self._current_leader = data.get("leader")
                     self._group_view = data.get("group_view")
@@ -172,8 +171,8 @@ class Server:
                     break
 
         if self._state == State.PENDING:
-            self._logger.debug(
-                "Looks like there is no leader, declaring myself leader."
+            self._logger.info(
+                "Could not find a leader. Declaring myself."
             )
             self._set_leader(True)
             self._group_view[self._uuid] = (
@@ -182,7 +181,7 @@ class Server:
             )
             self._rom_handler.set_group_view(self._group_view)
 
-        self._logger.debug(f"In Request Join: {self._state}, {self._group_view}")
+            # TODO: do we need to broadcast something here and start an election if someone answers?
 
         self._promote_monitoring_data()
 
@@ -202,7 +201,7 @@ class Server:
         if not self._tcp_handler.send(welcome_msg, self._group_view[data["uuid"]]):
             #TODO handle this case?
             self._logger.warn("Added a server to my groupview but was unable to send it a welcome message!")
-        self._logger.debug(
+        self._logger.info(
             "Received server join request from {}".format(
                 (data["address"], data["port"])
             )
@@ -215,7 +214,7 @@ class Server:
 
         self._logger.debug("Checking election required.")
         if self._election_required():
-            self._logger.debug("Election is required, starting election.")
+            self._logger.info("Election is required, starting election.")
             self._start_election()
         else:
             self._logger.debug("No election required.")
@@ -229,7 +228,7 @@ class Server:
             "mid": self._uuid,
             "is_leader": False,
         }
-        self._logger.debug(f"Starting election, sending election message to {neighbor}")
+        self._logger.info(f"Starting election.")
         self._participating = True
         self._promote_monitoring_data()
         self._send_election_message(election_msg)
@@ -252,6 +251,7 @@ class Server:
         success = False
         while not success:
             neighbor = self._get_neighbor(prev_neighbor)
+            self._logger.info(f"Sending election message to {neighbor}.")
             if neighbor == self._uuid:
                 self._logger.warning(
                     "Could not find any available neighbors. Calling my own method."
@@ -265,13 +265,12 @@ class Server:
                 self._logger.warning(f"Could not send election message to {neighbor}.")
 
     def _on_election_message(self, data):
-        self._logger.debug(f"Received Election Message from {data['mid']}")
+        self._logger.debug(f"Received an Election Message from {data['mid']}")
         neighbor = self._get_neighbor()
 
         if data["is_leader"]:
-            self._logger.debug(
-                f"Message is a leader message, setting {data['mid']} to leader."
-            )
+            self._logger.debug(f"Message is a leader message.")
+            self._logger.info(f"Setting {data['mid']} to leader.")
             self._current_leader = data["mid"]
 
             if self._participating:
@@ -283,10 +282,12 @@ class Server:
                 self._send_election_message(data)
             else:
                 self._set_leader(True)
-                self._distribute_group_view()
+
                 self._logger.debug(
                     "Received my own leader message, will terminate the election."
                 )
+
+                self._logger.info("Updating group view.")
             self._promote_monitoring_data()
 
             return
@@ -308,9 +309,9 @@ class Server:
             self._send_election_message(data)
 
         elif data["mid"] == self._uuid:
-            self._logger.debug(
-                f"Received my own election message, declaring myself leader and sending leader message to {neighbor}"
-            )
+            self._logger.debug(f"Received my own election message.")
+            self._logger.info("Declaring myself leader.")
+            self._logger.debug(f"Sending leader message to {neighbor}")
             self._current_leader = self._uuid
             data["mid"] = self._uuid
             data["is_leader"] = True
@@ -347,10 +348,10 @@ class Server:
                     self._logger.debug(f"Node {uuid} has timed out.")
                     self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
                     if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
-                        self._logger.debug(f"Node {uuid} has timed out twice in a row. Removing.")
+                        self._logger.info(f"Node {uuid} has timed out twice in a row. Removing.")
                         remove.append(uuid)
             else:
-                self._logger.debug(
+                self._logger.info(
                     f"Node {uuid} does not appear to be in group view. Removing."
                 )
                 remove.append(uuid)
@@ -408,6 +409,7 @@ class Server:
 
     def _on_request_entry(self,res):
         self._clients[res["uuid"]] = (res['address'],res['port'])
+        self._logger.info(f"Client {res['uuid']} is requesting entry.") # TODO: change this depending on entering or leaving
         mes = {
             "uuid": f"{self._uuid}",
             "intention": ACCEPT_CLIENT,
@@ -426,12 +428,20 @@ class Server:
         if res["uuid"] == self._uuid:
             mes = {"uuid": f"{self._uuid}"}
             addOne = False
+
             if self._entries >= MAX_ENTRIES:
+                self._logger.info("Maximum Entries exceeded.")
                 mes["intention"] = DENY_ENTRY
             else:
                 addOne = True
                 mes["intention"] = ACCEPT_ENTRY
                 mes["entries"] = self._entries+1
+
+            if addOne:
+                self._logger.info(f"Granting access to client {res['uuid']}.")
+            else:
+                self._logger.info(f"Denying access to client {res['uuid']}.")
+
             if self._tcp_handler.send(mes, (res['client_adr'],res['client_port'])):
                 self._logger.debug("Successfully sent the message, will increase if applicable!")
                 if addOne: self._entries +=1
@@ -440,7 +450,7 @@ class Server:
                 self._rom_handler.send({"intention": REVERT_ENTRY, "uuid": f"{self._uuid}"})
         else:
             if self._entries < MAX_ENTRIES:
-                self._logger("Not from me, increasing entries!")
+                self._logger.debug("Not from me, increasing entries!")
                 self._entries += 1
 
     #TODO remove when we are sure this isn't needed
@@ -465,32 +475,44 @@ class Server:
 
         msg = {"intention": SHUTDOWN_SERVER, "uuid": f"{self._uuid}"}
 
+        self._logger.debug("Shutting down connection handlers.")
         self._tcp_handler.join()
         self._broadcast_handler.join()
         #TODO currently doesn't work
         self._rom_handler.join()
-        self._logger.info("All listeners shut down, canceling heartbeat timer.")
+        self._logger.debug("Stopping heartbeat timer.")
         self._heartbeat_timer.cancel()
 
         if leader_address and self._current_leader != self._uuid:
+            self._logger.debug("Sending shutdown signal to leader.")
             self._tcp_handler.send(msg, leader_address)
         else:
+            self._logger.debug("Broadcasting shutdown signal.")
             self._broadcast_handler.send(msg)
 
 
     def run(self):
 
+        self._logger.info("Starting Server...")
+
+        self._logger.info("Looking for server group...")
         self._request_join()
+
+        self._logger.info("Starting TCP hander.")
         self._tcp_handler.start()
+        self._logger.info("Starting Broadcast hander.")
         self._broadcast_handler.start()
+        self._logger.info("Starting Multicast hander.")
         self._rom_handler.start()
 
+        self._logger.info("Running.")
         try:
             while True:
                 pass
         except KeyboardInterrupt:
-            self._logger.debug("Interrupted.")
+            self._logger.info("Shutting down...")
             self._shut_down()
+            self._logger.info("Shut down successfull.")
             try:
                 sys.exit(0)
             except SystemExit:
