@@ -16,9 +16,8 @@ from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
                                DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT,
                                HEARTBEAT_TIMEOUT, IDENT_CLIENT, IDENT_SERVER,
                                MAX_ENTRIES, MAX_TIMEOUTS, MAX_TRIES,
-                               MONITOR_MESSAGE, OM, REQUEST_ENTRY,
-                               REVERT_ENTRY, SHUTDOWN_SERVER,
-                               UPDATE_GROUP_VIEW, State)
+                               MONITOR_MESSAGE, REQUEST_ENTRY, REVERT_ENTRY,
+                               SHUTDOWN_SERVER, UPDATE_GROUP_VIEW, State)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
                              ON_TCP_MESSAGE)
 
