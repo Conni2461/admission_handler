@@ -1,7 +1,6 @@
 import datetime
 import json
 import logging
-import math
 import os
 import sys
 import uuid
@@ -20,11 +19,10 @@ from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
                                MAX_TRIES, MONITOR_MESSAGE, PING, REQUEST_ENTRY,
                                REVERT_ENTRY, SHUTDOWN_SERVER,
                                UPDATE_GROUP_VIEW, State)
-from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_MULTICAST_MESSAGE,
-                             ON_TCP_MESSAGE)
+from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_HEARTBEAT_TIMEOUT,
+                             ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE)
 
 logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.DEBUG)
-
 
 class Server:
     def __init__(self):
@@ -55,6 +53,9 @@ class Server:
         )
         dispatcher.connect(
             self._on_rom_msg, signal=ON_MULTICAST_MESSAGE, sender=self._rom_handler
+        )
+        dispatcher.connect(
+            self._on_heartbeat_timeout, signal=ON_HEARTBEAT_TIMEOUT, sender=self
         )
 
     # network message handler methods -----------------------------------------
@@ -347,6 +348,7 @@ class Server:
         self._promote_monitoring_data()
 
     def _check_heartbeats(self):
+
         self._logger.debug("Checking heartbeats.")
 
         self._promote_monitoring_data()
@@ -388,6 +390,10 @@ class Server:
                 f"Received heartbeat from {data['uuid']} who is not in group view."
             )
 
+    def _on_heartbeat_timeout(self, heartbeat_func):
+        self._logger.debug(f"Heartbeat timed out, calling {heartbeat_func}.")
+        heartbeat_func()
+
     # other methods -----------------------------------------------------------
 
     def _promote_monitoring_data(self):
@@ -400,13 +406,14 @@ class Server:
             if self._heartbeat_timer is not None:
                 self._heartbeat_timer.cancel()
             self._heartbeat_timer = RepeatTimer(
-                HEARTBEAT_TIMEOUT + 5, self._check_heartbeats
+                HEARTBEAT_TIMEOUT + 5, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._check_heartbeats}
             )
             self._heartbeat_timer.start()
         else:
             if self._heartbeat_timer is not None:
                 self._heartbeat_timer.cancel()
-            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, self._send_heartbeat)
+            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._send_heartbeat}
+            )
             self._heartbeat_timer.start()
 
     def _register_client(self, data):
@@ -510,7 +517,6 @@ class Server:
 
         self._logger.info("Starting Server...")
 
-        self._logger.info("Looking for server group...")
         self._request_join()
 
         self._logger.info("Starting TCP hander.")
