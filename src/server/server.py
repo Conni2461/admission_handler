@@ -89,8 +89,14 @@ class Server:
         elif data["intention"] == ELECTION_MESSAGE:
             self._on_election_message(data)
         elif data["intention"] == SHUTDOWN_SERVER:
+            try:
             self._group_view.pop(data["uuid"])
+            except:
+                pass
+            try:
             self._heartbeats.pop(data["uuid"])
+            except:
+                pass
             self._logger.debug(
                 f"Received shutdown message from sever {data['uuid']}. Removing from group view."
             )
