@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+import queue
 import select
 import socket
 import struct
@@ -8,13 +9,13 @@ import sys
 import uuid
 
 from louie import dispatcher
-from src.utils.constants import MULTICAST_IP, MULTICAST_PORT, Purpose
-from src.utils.signals import ON_MULTICAST_MESSAGE
 from src.utils.common import SocketThread
+from src.utils.constants import MULTICAST_IP, MULTICAST_PORT, TIMEOUT, Purpose
+from src.utils.signals import ON_MULTICAST_MESSAGE
 
 
 class ROMulticastHandler(SocketThread):
-    def __init__(self, id, view):
+    def __init__(self, id, view, timeout=TIMEOUT):
         super().__init__()
         self._name = id
         self._snumber = 0
@@ -43,6 +44,7 @@ class ROMulticastHandler(SocketThread):
         self._listener_socket.setsockopt(
             socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq
         )
+        self._listener_socket.settimeout(timeout)
 
         self._sender_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sender_socket.settimeout(0.2)
@@ -257,7 +259,7 @@ class ROMulticastHandler(SocketThread):
         while not self.stopped:
             try:
                 ready_socks, _, _ = select.select(
-                    [self._listener_socket, self._sender_socket], [], []
+                    [self._listener_socket, self._sender_socket], [], [], TIMEOUT
                 )
                 for sock in ready_socks:
                     data, addr = sock.recvfrom(1024)
