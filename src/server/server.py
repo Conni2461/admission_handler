@@ -74,7 +74,7 @@ class Server:
             self._logger.debug(
                 f"Received shutdown message from {data['uuid']}{add}, will start an election."
             )
-                self._start_election()
+            self._start_election()
         elif data["intention"] == MONITOR_MESSAGE:
             pass
         else:
@@ -90,11 +90,11 @@ class Server:
             self._on_election_message(data)
         elif data["intention"] == SHUTDOWN_SERVER:
             try:
-            self._group_view.pop(data["uuid"])
+                self._group_view.pop(data["uuid"])
             except:
                 pass
             try:
-            self._heartbeats.pop(data["uuid"])
+                self._heartbeats.pop(data["uuid"])
             except:
                 pass
             self._logger.debug(
