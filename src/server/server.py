@@ -106,6 +106,9 @@ class Server:
             self._on_received_heartbeat(data)
         elif data["intention"] == REQUEST_ENTRY:
             self._on_request_entry(data)
+        elif data.get("intention") == ACCEPT_SERVER:
+            self._on_accepted(data)
+            self._promote_monitoring_data()
 
     def _on_rom_msg(self, data=None):
         if data == None:
@@ -149,6 +152,20 @@ class Server:
             f"Received updated group view with {len(list(self._group_view.keys()))} items."
         )
 
+    def _on_accepted(self, data):
+        self._logger.info("Found a group leader.")
+        self._state = State.MEMBER
+        self._current_leader = data.get("leader")
+        self._group_view = data.get("group_view")
+        self._logger.debug(
+            f"I have been accepted by leader {self._current_leader}. Group view has been populated."
+        )
+        self._set_leader(False)
+        self._rom_handler.sync_state(
+            json.loads(data.get("rnumbers")),
+            json.loads(data.get("deliver_queue")),
+        )
+
     def _request_join(self):
         mes = {
             "intention": IDENT_SERVER,
@@ -164,18 +181,7 @@ class Server:
             data, _ = self._tcp_handler.listen()
             if data is not None:
                 if data.get("intention") == ACCEPT_SERVER:
-                    self._logger.info("Found a group leader.")
-                    self._state = State.MEMBER
-                    self._current_leader = data.get("leader")
-                    self._group_view = data.get("group_view")
-                    self._logger.debug(
-                        f"I have been accepted by leader {self._current_leader}. Group view has been populated."
-                    )
-                    self._set_leader(False)
-                    self._rom_handler.sync_state(
-                        json.loads(data.get("rnumbers")),
-                        json.loads(data.get("deliver_queue")),
-                    )
+                    self._on_accepted(data)
                     break
 
         if self._state == State.PENDING:
@@ -188,8 +194,6 @@ class Server:
                 self._tcp_handler.port,
             )
             self._rom_handler.set_group_view(self._group_view)
-
-            # TODO: do we need to broadcast something here and start an election if someone answers?
 
         self._promote_monitoring_data()
 
@@ -380,6 +384,11 @@ class Server:
                 if uid in self._heartbeats:
                     self._heartbeats.pop(uid)
             self._distribute_group_view()
+
+
+        if len(self._group_view) == 0:
+            self._logger.info("Looks like I am the only server.")
+            self._request_join()
 
     def _on_received_heartbeat(self, data):
         if data['uuid'] in self._group_view:
