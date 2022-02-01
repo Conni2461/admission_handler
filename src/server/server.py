@@ -386,7 +386,7 @@ class Server:
             self._distribute_group_view()
 
 
-        if len(self._group_view) == 0:
+        if len(self._group_view) == 1:
             self._logger.info("Looks like I am the only server.")
             self._request_join()
 
