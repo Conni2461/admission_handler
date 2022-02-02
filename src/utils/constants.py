@@ -6,24 +6,6 @@ BROADCAST_PORT = 5973
 MULTICAST_IP = "224.1.1.1"
 MULTICAST_PORT = 5007
 WINDOWS_IP = "127.0.0.1"
-IDENT_SERVER = "IDServer"
-IDENT_CLIENT = "IDClient"
-REQUEST_ENTRY = "ClientEntryRequest"
-SHUTDOWN_SERVER = "ShutdownServer"
-SHUTDOWN_SYSTEM = "ShutdownSystem"
-UPDATE_ENTRIES = "UpdateEntries"
-UPDATE_GROUP_VIEW = "UpdateGV"
-ACCEPT_SERVER = "AcceptServer"
-ACCEPT_CLIENT = "AcceptClient"
-ACCEPT_ENTRY = "AcceptEntry"
-DENY_ENTRY = "DenyEntry"
-REVERT_ENTRY = "RevertEntry"
-ELECTION_MESSAGE = "ElectionMessage"
-HEARTBEAT = "Heartbeat"
-MONITOR_MESSAGE = "Monitor"
-PING = "Ping"
-OM = "OM"
-OM_RESULT = "OMResult"
 TIMEOUT = 0.1
 MAX_TRIES = 3
 MAX_ENTRIES = 20
@@ -38,6 +20,25 @@ class State(Enum):
     LEADER = 1
     MEMBER = 2
 
+class Intention(Enum):
+    IDENT_SERVER = 0
+    IDENT_CLIENT = 1
+    SHUTDOWN_SERVER = 2
+    REQUEST_ENTRY = 3
+    SHUTDOWN_SYSTEM = 4
+    UPDATE_ENTRIES = 5
+    UPDATE_GROUP_VIEW = 6
+    ACCEPT_SERVER = 7
+    ACCEPT_CLIENT = 8
+    ACCEPT_ENTRY = 9
+    DENY_ENTRY = 10
+    REVERT_ENTRY = 11
+    ELECTION_MESSAGE = 12
+    HEARTBEAT = 13
+    PING = 14
+    MONITOR_MESSAGE = 15
+    OM = 16
+    OM_RESULT = 17
 
 class Purpose(Enum):
     REAL_MSG = 0
