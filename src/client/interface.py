@@ -1,3 +1,4 @@
+import os
 import signal
 import sys
 import threading
@@ -5,14 +6,14 @@ import time
 from typing import Optional
 
 from louie import dispatcher
-from PySide6 import QtWidgets
+from PySide2 import QtWidgets
 
 from ..utils.constants import MAX_ENTRIES
 from ..utils.signals import ON_ENTRY_REQUEST
 from .signals import (ON_ACCESS_RESPONSE, ON_CLIENT_SHUTDOWN, ON_COUNT_CHANGED,
                       ON_REQUEST_ACCESS, ON_SERVER_CHANGED)
 
-
+os.environ['QT_MAC_WANTS_LAYER'] = '1'
 class ClientUI(QtWidgets.QDialog):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
