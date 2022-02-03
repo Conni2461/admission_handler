@@ -1,14 +1,15 @@
+import os
 import signal
 import sys
 
 from louie import dispatcher
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide2 import QtGui, QtWidgets
 
 from ..utils.broadcast_handler import BroadcastHandler
 from ..utils.constants import MONITOR_MESSAGE
 from ..utils.signals import ON_BROADCAST_MESSAGE
 
-
+os.environ['QT_MAC_WANTS_LAYER'] = '1'
 class Monitor(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
