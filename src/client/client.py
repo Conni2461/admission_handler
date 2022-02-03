@@ -9,10 +9,7 @@ from src.utils.signals import (ON_BROADCAST_MESSAGE, ON_ENTRY_REQUEST,
                                ON_TCP_MESSAGE)
 from src.utils.tcp_handler import TCPHandler
 
-from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, DENY_ENTRY,
-                               IDENT_CLIENT, LOGGING_LEVEL, MAX_ENTRIES,
-                               MAX_TRIES, REQUEST_ENTRY, SHUTDOWN_SERVER,
-                               SHUTDOWN_SYSTEM, UPDATE_ENTRIES)
+from ..utils.constants import LOGGING_LEVEL, MAX_ENTRIES, MAX_TRIES, Intention
 
 
 class Client:
@@ -41,7 +38,7 @@ class Client:
     def find_server(self):
         """Broadcast this clients existence to the system and register the first server that answers."""
         mes = {
-            "intention": IDENT_CLIENT,
+            "intention": str(Intention.IDENT_CLIENT),
             "uuid": f"{self._uuid}",
             "address": self._tcp_listener.address,
             "port": self._tcp_listener.port,
@@ -53,7 +50,7 @@ class Client:
             data, add = self._tcp_listener.listen()
             if data is not None:
                 self._logger.debug(data)
-                if data.get("intention") == ACCEPT_CLIENT:
+                if data.get("intention") == str(Intention.ACCEPT_CLIENT):
                     self._logger.debug(f"Recieved client accept message {data} from {add}")
                     self.server = (data.get("address"),data.get("port"))
                     break
@@ -63,7 +60,7 @@ class Client:
             self._logger.debug(f"Client No. {self.number} asked to request entry, but didn't have a server. Please try again.")
         else:
             mes = {
-                "intention": REQUEST_ENTRY,
+                "intention": str(Intention.REQUEST_ENTRY),
                 "uuid": f"{self._uuid}",
                 "address": self._tcp_listener.address,
                 "port": self._tcp_listener.port,
@@ -79,24 +76,24 @@ class Client:
 
     #TODO potentially discard address in the handler
     def _on_broadcast(self, data=None, addr=None):
-        if data["intention"] == SHUTDOWN_SYSTEM:
+        if data["intention"] == str(Intention.SHUTDOWN_SYSTEM):
             self._shut_down()
 
     def _on_tcp_msg(self, data=None, addr=None):
-        if data["intention"] == SHUTDOWN_SERVER:
+        if data["intention"] == str(Intention.SHUTDOWN_SERVER):
             self.server == None
             self.find_server()
-        elif data["intention"] == ACCEPT_CLIENT:
+        elif data["intention"] == str(Intention.ACCEPT_CLIENT):
             self._logger.info(f"Received random client accept message: {data}")
-        elif data["intention"] == ACCEPT_ENTRY:
+        elif data["intention"] == str(Intention.ACCEPT_ENTRY):
             self._logger.info("Entry granted, please enjoy yourself!")
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
-        elif data["intention"] == UPDATE_ENTRIES:
+        elif data["intention"] == str(Intention.UPDATE_ENTRIES):
             #TODO actually send this
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
-        elif data["intention"] == DENY_ENTRY:
+        elif data["intention"] == str(Intention.DENY_ENTRY):
             self._logger.info("Entry denied. Seems like we are full, sorry.")
             #TODO shut this client down here?
 

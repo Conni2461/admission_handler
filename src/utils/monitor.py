@@ -6,7 +6,7 @@ from louie import dispatcher
 from PySide2 import QtGui, QtWidgets
 
 from ..utils.broadcast_handler import BroadcastHandler
-from ..utils.constants import MONITOR_MESSAGE
+from ..utils.constants import Intention
 from ..utils.signals import ON_BROADCAST_MESSAGE
 
 os.environ['QT_MAC_WANTS_LAYER'] = '1'
@@ -35,7 +35,7 @@ class Monitor(QtWidgets.QDialog):
         self._broadcast_handler.start()
 
     def _on_udp_msg(self, data=None, addr=None):
-        if data["intention"] == MONITOR_MESSAGE:
+        if data["intention"] == str(Intention.MONITOR_MESSAGE):
             if data.get("group_view"):
                 for key in data["group_view"]:
                     if not self._model.findItems(key):

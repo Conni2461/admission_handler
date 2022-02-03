@@ -15,13 +15,9 @@ from src.utils.tcp_handler import TCPHandler
 from src.utils.bzantine_tree import BzantineTree
 
 from ..utils.common import CircularList, RepeatTimer
-from ..utils.constants import (ACCEPT_CLIENT, ACCEPT_ENTRY, ACCEPT_SERVER,
-                               DENY_ENTRY, ELECTION_MESSAGE, HEARTBEAT, OM,
-                               OM_RESULT, HEARTBEAT_TIMEOUT, IDENT_CLIENT,
-                               IDENT_SERVER, LOGGING_LEVEL, MAX_ENTRIES,
-                               MAX_TIMEOUTS, MAX_TRIES, MONITOR_MESSAGE, PING,
-                               REQUEST_ENTRY, REVERT_ENTRY, SHUTDOWN_SERVER,
-                               UPDATE_GROUP_VIEW, State)
+from ..utils.constants import (HEARTBEAT_TIMEOUT,
+                               LOGGING_LEVEL, MAX_ENTRIES, MAX_TIMEOUTS,
+                               MAX_TRIES, State, Intention)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_HEARTBEAT_TIMEOUT,
                              ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE)
 
@@ -73,17 +69,17 @@ class Server:
             return
         if data.get("uuid") == self._uuid:
             return
-        if (data["intention"] == IDENT_SERVER) and (self._state == State.LEADER):
+        if (data["intention"] == str(Intention.IDENT_SERVER)) and (self._state == State.LEADER):
             self._register_server(data)
-        elif data["intention"] == IDENT_CLIENT:
+        elif data["intention"] == str(Intention.IDENT_CLIENT):
             self._register_client(data)
-        elif data["intention"] == SHUTDOWN_SERVER:
+        elif data["intention"] == str(Intention.SHUTDOWN_SERVER):
             add = "(leader)" if data["uuid"] == self._current_leader else ""
             self._logger.debug(
                 f"Received shutdown message from {data['uuid']}{add}, will start an election."
             )
             self._start_election()
-        elif data["intention"] == MONITOR_MESSAGE:
+        elif data["intention"] == str(Intention.MONITOR_MESSAGE):
             pass
         else:
             self._logger.debug(f"Received broadcast message: {data}")
@@ -92,11 +88,11 @@ class Server:
         if data == None:
             self._logger.warn("Got called for an empty TCP message!")
             return
-        if data["intention"] == UPDATE_GROUP_VIEW:
+        if data["intention"] == str(Intention.UPDATE_GROUP_VIEW):
             self._on_received_grp_view(data)
-        elif data["intention"] == ELECTION_MESSAGE:
+        elif data["intention"] == str(Intention.ELECTION_MESSAGE):
             self._on_election_message(data)
-        elif data["intention"] == SHUTDOWN_SERVER:
+        elif data["intention"] == str(Intention.SHUTDOWN_SERVER):
             try:
                 self._group_view.pop(data["uuid"])
             except:
@@ -109,14 +105,14 @@ class Server:
                 f"Received shutdown message from sever {data['uuid']}. Removing from group view."
             )
             self._distribute_group_view()
-        elif data["intention"] == HEARTBEAT:
+        elif data["intention"] == str(Intention.HEARTBEAT):
             self._on_received_heartbeat(data)
-        elif data["intention"] == REQUEST_ENTRY:
+        elif data["intention"] == str(Intention.REQUEST_ENTRY):
             self._on_request_entry(data)
-        elif data.get("intention") == ACCEPT_SERVER:
+        elif data.get("intention") == str(Intention.ACCEPT_SERVER):
             self._on_accepted(data)
             self._promote_monitoring_data()
-        elif data["intention"] == OM:
+        elif data["intention"] == str(Intention.OM):
             if "v" not in data:
                 self._stop_bzantine(data)
             else:
@@ -126,11 +122,11 @@ class Server:
         if data == None:
             self._logger.warn("Got called for an empty ROM message!")
             return
-        elif data["intention"] == OM_RESULT:
+        elif data["intention"] == str(Intention.OM_RESULT):
             self._entries = data["result"]
-        elif data["intention"] == ACCEPT_CLIENT:
+        elif data["intention"] == str(Intention.ACCEPT_CLIENT):
             self._on_entry_request_rom(data)
-        elif data["intention"] == REVERT_ENTRY:
+        elif data["intention"] == str(Intention.REVERT_ENTRY):
             if data["uuid"] != self._uuid:
                 self._logger.debug("Received a revert message, decreasing entries by 1!")
                 self._entries -= 1
@@ -148,11 +144,11 @@ class Server:
         self._rom_handler.set_group_view(self._group_view)
         for uuid, address in self._group_view.items():
             if uuid != self._uuid:
-                data = {"intention": UPDATE_GROUP_VIEW, "group_view": self._group_view}
+                data = {"intention": str(Intention.UPDATE_GROUP_VIEW), "group_view": self._group_view}
                 if not self._tcp_handler.send(data, address):
                     self._logger.warning(f"Could not send group view to: {uuid}.")
 
-        self._broadcast_handler.send({"intention": MONITOR_MESSAGE, "group_view": self._group_view})
+        self._broadcast_handler.send({"intention": str(Intention.MONITOR_MESSAGE), "group_view": self._group_view})
 
     def _on_received_grp_view(self, data):
         group_view = {}
@@ -182,7 +178,7 @@ class Server:
 
     def _request_join(self):
         mes = {
-            "intention": IDENT_SERVER,
+            "intention": str(Intention.IDENT_SERVER),
             "uuid": f"{self._uuid}",
             "address": self._tcp_handler.address,
             "port": self._tcp_handler.port
@@ -194,7 +190,7 @@ class Server:
         for _ in range(MAX_TRIES):
             data, _ = self._tcp_handler.listen()
             if data is not None:
-                if data.get("intention") == ACCEPT_SERVER:
+                if data.get("intention") == str(Intention.ACCEPT_SERVER):
                     self._on_accepted(data)
                     break
 
@@ -215,7 +211,7 @@ class Server:
         self._group_view[data["uuid"]] = (data["address"], data["port"])
 
         welcome_msg = {
-            "intention": ACCEPT_SERVER,
+            "intention": str(Intention.ACCEPT_SERVER),
             "leader": f"{self._uuid}",
             "group_view": self._group_view,
             "rnumbers": json.dumps(self._rom_handler._rnumbers),
@@ -252,7 +248,7 @@ class Server:
 
     def _start_election(self):
         election_msg = {
-            "intention": ELECTION_MESSAGE,
+            "intention": str(Intention.ELECTION_MESSAGE),
             "mid": self._uuid,
             "is_leader": False,
         }
@@ -307,7 +303,7 @@ class Server:
         self._logger.info("Starting bzantine algorithm")
         dests = list(set(self._group_view.keys()) - set([self._uuid]))
         om = {
-            "intention": OM,
+            "intention": str(Intention.OM),
             "v": v,
             "dests": dests,
             "list": [self._uuid],
@@ -348,7 +344,7 @@ class Server:
             if f - 1 >= 0:
                 l.insert(0, self._uuid)
                 om_new = {
-                    "intention": OM,
+                    "intention": str(Intention.OM),
                     "v": self._entries,
                     "dests": dests,
                     "list": l,
@@ -363,7 +359,7 @@ class Server:
             res = self._bzantine_tree.complete()
             self._bzantine_tree = None
             om_new = {
-                "intention": OM,
+                "intention": str(Intention.OM),
                 "from": self._uuid,
                 "result": res
             }
@@ -397,7 +393,7 @@ class Server:
                 group_view = deepcopy(self._group_view)
 
                 for uuid, address in self._group_view.items():
-                    if not self._tcp_handler.send({"intention": PING}, address):
+                    if not self._tcp_handler.send({"intention": str(Intention.PING)}, address):
                         group_view.pop(uuid)
 
                 self._group_view = group_view
@@ -440,7 +436,7 @@ class Server:
 
     def _send_heartbeat(self):
         if not self._participating:
-            msg = {"intention": HEARTBEAT, "uuid": f"{self._uuid}", "clients": self._clients, "entries": self._entries}
+            msg = {"intention": str(Intention.HEARTBEAT), "uuid": f"{self._uuid}", "clients": self._clients, "entries": self._entries}
             if not self._tcp_handler.send(msg, self._group_view[self._current_leader]):
                 self._logger.warning("Leader seems to be offline, starting new election.")
                 self._start_election()
@@ -504,7 +500,7 @@ class Server:
     # other methods -----------------------------------------------------------
 
     def _promote_monitoring_data(self):
-        msg = {"intention": MONITOR_MESSAGE, "uuid": self._uuid, "clients": self._clients, "election": self._participating, "state": self._state.name, "entries": self._entries}
+        msg = {"intention": str(Intention.MONITOR_MESSAGE), "uuid": self._uuid, "clients": self._clients, "election": self._participating, "state": self._state.name, "entries": self._entries}
         self._broadcast_handler.send(msg)
 
     def _set_leader(self, state=True):
@@ -525,7 +521,7 @@ class Server:
 
     def _register_client(self, data):
         mes = {
-            "intention": ACCEPT_CLIENT,
+            "intention": str(Intention.ACCEPT_CLIENT),
             "uuid": self._uuid,
             "address": self._tcp_handler.address,
             "port": self._tcp_handler.port
@@ -541,7 +537,7 @@ class Server:
         self._logger.info(f"Client {res['uuid']} is requesting entry.") # TODO: change this depending on entering or leaving
         mes = {
             "uuid": f"{self._uuid}",
-            "intention": ACCEPT_CLIENT,
+            "intention": str(Intention.ACCEPT_CLIENT),
             "client_uuid": res["uuid"],
             "client_adr": res['address'],
             "client_port": res['port']
@@ -560,10 +556,10 @@ class Server:
 
             if self._entries >= MAX_ENTRIES:
                 self._logger.info("Maximum Entries exceeded.")
-                mes["intention"] = DENY_ENTRY
+                mes["intention"] = str(Intention.DENY_ENTRY)
             else:
                 addOne = True
-                mes["intention"] = ACCEPT_ENTRY
+                mes["intention"] = str(Intention.ACCEPT_ENTRY)
                 mes["entries"] = self._entries+1
 
             if addOne:
@@ -576,7 +572,7 @@ class Server:
                 if addOne: self._entries +=1
             else:
                 self._logger.warn("Accepting entry request failed! Sending decrease request!")
-                self._rom_handler.send({"intention": REVERT_ENTRY, "uuid": f"{self._uuid}"})
+                self._rom_handler.send({"intention": str(Intention.REVERT_ENTRY), "uuid": f"{self._uuid}"})
         else:
             if self._entries < MAX_ENTRIES:
                 self._logger.debug("Not from me, increasing entries!")
@@ -600,9 +596,9 @@ class Server:
         self._logger.info("Shutting down.")
         leader_address = self._group_view.get(self._current_leader)
 
-        self._broadcast_handler.send({"intention": MONITOR_MESSAGE, "uuid": self._uuid, "leaving": True})
+        self._broadcast_handler.send({"intention": str(Intention.MONITOR_MESSAGE), "uuid": self._uuid, "leaving": True})
 
-        msg = {"intention": SHUTDOWN_SERVER, "uuid": f"{self._uuid}"}
+        msg = {"intention": str(Intention.SHUTDOWN_SERVER), "uuid": f"{self._uuid}"}
 
         self._logger.debug("Shutting down connection handlers.")
         self._tcp_handler.join()

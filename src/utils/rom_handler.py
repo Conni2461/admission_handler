@@ -12,7 +12,7 @@ import queue
 from louie import dispatcher
 from src.utils.common import SocketThread
 from src.utils.constants import (LOGGING_LEVEL, MULTICAST_IP, MULTICAST_PORT,
-                                 TIMEOUT, OM_RESULT, Purpose)
+                                 TIMEOUT, Intention, Purpose)
 from src.utils.signals import ON_MULTICAST_MESSAGE
 
 
@@ -186,14 +186,14 @@ class ROMulticastHandler(SocketThread):
         mesg["a"] = a
 
         if mesg["purpose"] == str(Purpose.STOP):
-            self.stop(False)
+            self.pause(False)
             return
         elif mesg["purpose"] == str(Purpose.RESUME):
             self.resume(sendout=False)
             dispatcher.send(
                 signal=ON_MULTICAST_MESSAGE,
                 sender=self,
-                data={"intention": OM_RESULT, "result": mesg["value"]},
+                data={"intention": str(Intention.OM_RESULT), "result": mesg["value"]},
             )
             return
 
