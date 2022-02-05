@@ -129,9 +129,11 @@ class Server:
             self._entries = data["result"]
         elif data["intention"] == str(Intention.LOCK) or data["intention"] == str(Intention.UNLOCK):
             self._update_lock(data)
-        elif data["intention"] == str(Intention.UPDATE_ENTRIES):
+        elif data["intention"] == str(Intention.UPDATE_ENTRIES) and data["uuid"] != self._uuid:
             self._entries = data["entries"]
             self._logger.info("Current Entries: " + str(self._entries) + " of " + str(MAX_ENTRIES))
+            for addr_and_port in self._clients.values():
+                self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port)
         else:
             self._logger.debug(f"TODO: Do something with rom message: {data}")
 
