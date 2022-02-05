@@ -526,7 +526,8 @@ class Server:
             "intention": str(Intention.ACCEPT_CLIENT),
             "uuid": self._uuid,
             "address": self._tcp_handler.address,
-            "port": self._tcp_handler.port
+            "port": self._tcp_handler.port,
+            "entries": self._entries
         }
         self._logger.info(f"Trying to register a client with uuid {data['uuid']}")
         if self._tcp_handler.send(mes, (data['address'],data['port'])):

@@ -6,6 +6,7 @@ parser = argparse.ArgumentParser(description="No help")
 parser.add_argument("--server", action="store_true", default=False)
 parser.add_argument("--client", action="store_true", default=False)
 parser.add_argument("--monitor", action="store_true", default=False)
+parser.add_argument("--ui", action="store_true", default=False)
 
 args = parser.parse_args()
 
@@ -28,7 +29,15 @@ elif args.client:
     #from louie import dispatcher
     #TODO do this better, currently only acceptable for testing
     number = randint(1,100)
-    Client(number).run()
+    client = Client(number)
+
+    if args.ui:
+        from .client import interface
+        interface.launch(client)
+
+    else:
+        client.run()
+
 elif args.monitor:
     from .utils import monitor
     monitor.start_monitor()
