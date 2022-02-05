@@ -129,12 +129,9 @@ class Server:
             self._entries = data["result"]
         elif data["intention"] == str(Intention.LOCK) or data["intention"] == str(Intention.UNLOCK):
             self._update_lock(data)
-        elif data["intention"] == str(Intention.ACCEPT_CLIENT):
-            self._on_entry_request_rom(data)
-        elif data["intention"] == str(Intention.REVERT_ENTRY):
-            if data["uuid"] != self._uuid:
-                self._logger.debug("Received a revert message, decreasing entries by 1!")
-                self._entries -= 1
+        elif data["intention"] == str(Intention.UPDATE_ENTRIES):
+            self._entries = data["entries"]
+            self._logger.info("Current Entries: " + str(self._entries) + " of " + str(MAX_ENTRIES))
         else:
             self._logger.debug(f"TODO: Do something with rom message: {data}")
 
@@ -542,48 +539,6 @@ class Server:
         self._logger.info(f"Client {res['uuid']} is requesting an action.")
         self._requests.put(res)
         self._update_lock()
-
-    def _on_entry_request_rom(self, res):
-        self._logger.debug(f"Received an entry request rom!")
-        if res["uuid"] == self._uuid:
-            mes = {"uuid": f"{self._uuid}"}
-            addOne = False
-
-            if self._entries >= MAX_ENTRIES:
-                self._logger.info("Maximum Entries exceeded.")
-                mes["intention"] = str(Intention.DENY_ENTRY)
-            else:
-                addOne = True
-                mes["intention"] = str(Intention.ACCEPT_ENTRY)
-                mes["entries"] = self._entries+1
-
-            if addOne:
-                self._logger.info(f"Granting access to client {res['uuid']}.")
-            else:
-                self._logger.info(f"Denying access to client {res['uuid']}.")
-
-            if self._tcp_handler.send(mes, (res['client_adr'],res['client_port'])):
-                self._logger.debug("Successfully sent the message, will increase if applicable!")
-                if addOne: self._entries +=1
-            else:
-                self._logger.warn("Accepting entry request failed! Sending decrease request!")
-                self._rom_handler.send({"intention": str(Intention.REVERT_ENTRY), "uuid": f"{self._uuid}"})
-        else:
-            if self._entries < MAX_ENTRIES:
-                self._logger.debug("Not from me, increasing entries!")
-                self._entries += 1
-
-    #TODO remove when we are sure this isn't needed
-    def _grant_entry(self):
-        #TODO lock remote entries
-        if self._entries == None:
-            self._entries = 0
-        if self._entries < MAX_ENTRIES:
-            #TODO use remote entries
-            self._entries += 1
-            return True
-        else:
-            return False
     
     def _update_lock(self, data={"intention": "TODO"}): #TODO
         if self._lock == LockState.CLOSED:
