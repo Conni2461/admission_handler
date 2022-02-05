@@ -52,7 +52,7 @@ class Client:
             data, add = self._tcp_listener.listen()
             if data is not None:
                 self._logger.debug(data)
-                if data.get("intention") == str(Intention.
+                if data.get("intention") == str(Intention.ACCEPT_CLIENT):
                     self._logger.debug(f"Recieved client accept message {data} from {add}")
                     self.server = (data.get("address"),data.get("port"))
                     self.entries = data["entries"]
