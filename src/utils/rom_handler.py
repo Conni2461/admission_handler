@@ -287,7 +287,7 @@ class ROMulticastHandler(SocketThread):
                 s += 1
                 next_msg = self._check_for_next_msg(s, sender)
                 while next_msg is not None:
-                    self._process_message(next_msg, addr)
+                    self._process_message(next_msg["data"], addr)
                     s += 1
                     next_msg = self._check_for_next_msg(s, sender)
             elif s <= self._rnumbers[sender]:
