@@ -32,7 +32,7 @@ class Client:
             self._on_broadcast, signal=ON_BROADCAST_MESSAGE, sender=self._broadcast_handler
         )
         dispatcher.connect(
-            self._on_entry_request, signal=ON_ENTRY_REQUEST, sender=self.number
+            self._on_action_request, signal=ON_ENTRY_REQUEST, sender=self.number
         )
 
     def find_server(self):
@@ -55,19 +55,20 @@ class Client:
                     self.server = (data.get("address"),data.get("port"))
                     break
 
-    def _on_entry_request(self):
+    def _on_action_request(self, inc=True):
         if self.server == None:
-            self._logger.debug(f"Client No. {self.number} asked to request entry, but didn't have a server. Please try again.")
+            self._logger.debug(f"Client No. {self.number} asked to request an action, but didn't have a server. Please try again.")
+            self.find_server()
         else:
             mes = {
-                "intention": str(Intention.REQUEST_ENTRY),
+                "intention": str(Intention.REQUEST_ACTION),
                 "uuid": f"{self._uuid}",
                 "address": self._tcp_listener.address,
                 "port": self._tcp_listener.port,
-                "number": self.number
+                "number": self.number,
+                "increase": inc
             }
-            success = self._tcp_listener.send(mes, self.server)
-            if success:
+            if self._tcp_listener.send(mes, self.server):
                 self._logger.debug("Success! Waiting for response")
             else:
                 self._logger.warn(f"Client No. {self.number} discarding current server, connection seems to be malfunctioning.")
@@ -78,6 +79,9 @@ class Client:
     def _on_broadcast(self, data=None, addr=None):
         if data["intention"] == str(Intention.SHUTDOWN_SYSTEM):
             self._shut_down()
+        elif data["intention"] == str(Intention.UPDATE_ENTRIES):
+            self.entries = data["entries"]
+            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
     def _on_tcp_msg(self, data=None, addr=None):
         if data["intention"] == str(Intention.SHUTDOWN_SERVER):
@@ -87,10 +91,7 @@ class Client:
             self._logger.info(f"Received random client accept message: {data}")
         elif data["intention"] == str(Intention.ACCEPT_ENTRY):
             self._logger.info("Entry granted, please enjoy yourself!")
-            self.entries = data["entries"]
-            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
         elif data["intention"] == str(Intention.UPDATE_ENTRIES):
-            #TODO actually send this
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
         elif data["intention"] == str(Intention.DENY_ENTRY):
@@ -113,12 +114,18 @@ class Client:
 
         try:
             while True:
-                input("Please enter anything to send a request\n")
-                #TODO outsource this?
-                dispatcher.send(
-                    signal=ON_ENTRY_REQUEST,
-                    sender=self.number
-                )
+                if input("Please enter dec to decrease or anything else to send an entry request\n") == "dec":
+                    dispatcher.send(
+                        signal=ON_ENTRY_REQUEST,
+                        sender=self.number,
+                        inc=False
+                    )
+                else:
+                    #TODO outsource this?
+                    dispatcher.send(
+                        signal=ON_ENTRY_REQUEST,
+                        sender=self.number
+                    )
         except KeyboardInterrupt:
             self._logger.debug("Interrupted.")
             self._shut_down()

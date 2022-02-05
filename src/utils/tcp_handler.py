@@ -6,7 +6,7 @@ import sys
 from louie import dispatcher
 from src.utils.common import SocketThread
 from src.utils.constants import (BUFFER_SIZE, LOGGING_LEVEL, MAX_TRIES,
-                                 TIMEOUT, WINDOWS_IP)
+                                 TIMEOUT)
 from src.utils.signals import ON_TCP_MESSAGE
 
 
@@ -21,7 +21,7 @@ class TCPHandler(SocketThread):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if sys.platform == 'win32':
             # when testing on windows 10, we were unable to bind to ""
-            self._socket.bind((WINDOWS_IP, 0))
+            self._socket.bind((socket.gethostbyname_ex(socket.getfqdn())[2][0], 0))
         else:
             self._socket.bind(("", 0))
         socketname = self._socket.getsockname()

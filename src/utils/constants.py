@@ -5,7 +5,6 @@ BROADCAST_IP = "192.168.0.255"
 BROADCAST_PORT = 5973
 MULTICAST_IP = "224.1.1.1"
 MULTICAST_PORT = 5007
-WINDOWS_IP = "127.0.0.1"
 TIMEOUT = 0.1
 MAX_TRIES = 3
 MAX_ENTRIES = 20
@@ -24,7 +23,7 @@ class Intention(Enum):
     IDENT_SERVER = 0
     IDENT_CLIENT = 1
     SHUTDOWN_SERVER = 2
-    REQUEST_ENTRY = 3
+    REQUEST_ACTION = 3
     SHUTDOWN_SYSTEM = 4
     UPDATE_ENTRIES = 5
     UPDATE_GROUP_VIEW = 6
@@ -39,6 +38,14 @@ class Intention(Enum):
     MONITOR_MESSAGE = 15
     OM = 16
     OM_RESULT = 17
+    REQUEST_EXIT = 18
+    LOCK = 19
+    UNLOCK = 20
+
+class LockState(Enum):
+    OPEN = 0
+    MINE = 1
+    CLOSED = 2
 
 class Purpose(Enum):
     REAL_MSG = 0

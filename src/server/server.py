@@ -7,6 +7,7 @@ import uuid
 import math
 from copy import deepcopy
 from collections import Counter
+from queue import Queue
 
 from louie import dispatcher
 from src.utils.broadcast_handler import BroadcastHandler
@@ -17,7 +18,7 @@ from src.utils.bzantine_tree import BzantineTree
 from ..utils.common import CircularList, RepeatTimer
 from ..utils.constants import (HEARTBEAT_TIMEOUT,
                                LOGGING_LEVEL, MAX_ENTRIES, MAX_TIMEOUTS,
-                               MAX_TRIES, State, Intention)
+                               MAX_TRIES, LockState, State, Intention)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_HEARTBEAT_TIMEOUT,
                              ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE)
 
@@ -42,6 +43,8 @@ class Server:
         self._logger.setLevel(LOGGING_LEVEL)
 
         self._clients = dict()
+        self._requests = Queue()
+        self._lock = LockState.OPEN
         self._entries = 0
 
         self._bzantine_tree = None
@@ -107,8 +110,8 @@ class Server:
             self._distribute_group_view()
         elif data["intention"] == str(Intention.HEARTBEAT):
             self._on_received_heartbeat(data)
-        elif data["intention"] == str(Intention.REQUEST_ENTRY):
-            self._on_request_entry(data)
+        elif data["intention"] == str(Intention.REQUEST_ACTION):
+            self._on_request_action(data)
         elif data.get("intention") == str(Intention.ACCEPT_SERVER):
             self._on_accepted(data)
             self._promote_monitoring_data()
@@ -124,6 +127,8 @@ class Server:
             return
         elif data["intention"] == str(Intention.OM_RESULT):
             self._entries = data["result"]
+        elif data["intention"] == str(Intention.LOCK) or data["intention"] == str(Intention.UNLOCK):
+            self._update_lock(data)
         elif data["intention"] == str(Intention.ACCEPT_CLIENT):
             self._on_entry_request_rom(data)
         elif data["intention"] == str(Intention.REVERT_ENTRY):
@@ -526,27 +531,17 @@ class Server:
             "address": self._tcp_handler.address,
             "port": self._tcp_handler.port
         }
-        self._logger.debug(f"Trying to register a client with uuid {data['uuid']}")
+        self._logger.info(f"Trying to register a client with uuid {data['uuid']}")
         if self._tcp_handler.send(mes, (data['address'],data['port'])):
             pass
         else:
             self._logger.warn("Failed to accept a client, seems to have already disappeared again!")
 
-    def _on_request_entry(self,res):
+    def _on_request_action(self,res):
         self._clients[res["uuid"]] = (res['address'],res['port'])
-        self._logger.info(f"Client {res['uuid']} is requesting entry.") # TODO: change this depending on entering or leaving
-        mes = {
-            "uuid": f"{self._uuid}",
-            "intention": str(Intention.ACCEPT_CLIENT),
-            "client_uuid": res["uuid"],
-            "client_adr": res['address'],
-            "client_port": res['port']
-        }
-        try:
-            self._logger.debug(f"Sending entry request rom")
-            self._rom_handler.send(mes)
-        except ConnectionRefusedError:
-            self._logger.warn("Connection refused when trying to pass on client entry request")
+        self._logger.info(f"Client {res['uuid']} is requesting an action.")
+        self._requests.put(res)
+        self._update_lock()
 
     def _on_entry_request_rom(self, res):
         self._logger.debug(f"Received an entry request rom!")
@@ -589,6 +584,46 @@ class Server:
             return True
         else:
             return False
+    
+    def _update_lock(self, data={"intention": "TODO"}): #TODO
+        if self._lock == LockState.CLOSED:
+            if data["intention"] == str(Intention.UNLOCK):
+                self._lock = LockState.OPEN
+                self._logger.info("Lock unlocked by someone else!")
+        if self._lock == LockState.OPEN:
+            if data["intention"] == str(Intention.LOCK):
+                if data["uuid"] == self._uuid:
+                    self._lock = LockState.MINE
+                    self._logger.info("Lock acquired!")
+                    while not self._requests.empty():
+                        res = self._requests.get()
+                        if res["increase"]:
+                            if self._entries < MAX_ENTRIES:
+                                mes = {
+                                    "intention": str(Intention.ACCEPT_ENTRY),
+                                    "uuid": self._uuid
+                                    }
+                                if self._tcp_handler.send(mes, (res["address"],res["port"])):
+                                    self._entries += 1
+                                    self._logger.info("Granted someone entry. Current count: " + str(self._entries) + " of " + str(MAX_ENTRIES))
+                                else:
+                                    self._logger.warn("Failed to send entry acceptance to a client, ignoring the request!")
+                        else:
+                            self._entries -= 1
+                            self._logger.info("Someone left the venue. Current count: " + str(self._entries) + " of " + str(MAX_ENTRIES))
+                    for addr_and_port in self._clients.values():
+                        self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port)
+                    self._rom_handler.send({"uuid": self._uuid, "intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries})
+                    self._rom_handler.send({"uuid": self._uuid, "intention": str(Intention.UNLOCK)})
+                else:
+                    self._lock = LockState.CLOSED
+                    self._logger.info("Lock acquired by someone else!")
+            elif not self._requests.empty():
+                self._rom_handler.send({"intention":str(Intention.LOCK), "uuid": self._uuid})
+        if self._lock == LockState.MINE:
+            if data["intention"] == str(Intention.UNLOCK) and data["uuid"] == self._uuid:
+                self._lock = LockState.OPEN
+                self._logger.info("Lock unlocked by me!")
 
     # process methods ---------------------------------------------------------
 
