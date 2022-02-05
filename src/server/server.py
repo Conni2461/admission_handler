@@ -167,6 +167,7 @@ class Server:
     def _on_accepted(self, data):
         self._logger.info("Found a group leader.")
         self._state = State.MEMBER
+        self._entries = data["entries"]
         self._current_leader = data.get("leader")
         self._group_view = data.get("group_view")
         self._logger.debug(
@@ -218,7 +219,7 @@ class Server:
             "group_view": self._group_view,
             "rnumbers": json.dumps(self._rom_handler._rnumbers),
             "deliver_queue": json.dumps(self._rom_handler._deliver_queue),
-            # "buisness_data": TODO send the current state of the system to the new member
+            "entries": self._entries,
         }
 
         self._rom_handler.register_new_member(data["uuid"])
@@ -539,7 +540,7 @@ class Server:
         self._logger.info(f"Client {res['uuid']} is requesting an action.")
         self._requests.put(res)
         self._update_lock()
-    
+
     def _update_lock(self, data={"intention": "TODO"}): #TODO
         if self._lock == LockState.CLOSED:
             if data["intention"] == str(Intention.UNLOCK):
