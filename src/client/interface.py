@@ -55,7 +55,9 @@ class ClientUI(QtWidgets.QDialog):
         dispatcher.connect(self._on_client_shutdown, signal=ON_CLIENT_SHUTDOWN, sender=client)
 
     def _on_leaving_btn_clicked(self):
-        print("TODO: implement someone leaving.")
+        dispatcher.send(signal=ON_ENTRY_REQUEST,sender=self._client.number,
+                        inc=False
+                    )
 
     def _on_action_btn_clicked(self):
         dispatcher.send(signal=ON_ENTRY_REQUEST,sender=self._client.number)
@@ -74,12 +76,12 @@ class ClientUI(QtWidgets.QDialog):
             print("Access Granted!")
             self._action_btn.setText("Access Granted!")
             self._status_lbl.setText(f"Last action: {response['message']}")
-            self._status_lbl.setStyleSheet("color: ForestGreen;")
+            # self._status_lbl.setStyleSheet("color: ForestGreen;")
         else:
             print(response["message"])
             self._action_btn.setText("Access Denied!")
             self._status_lbl.setText(f"Last action: {response['message']}.")
-            self._status_lbl.setStyleSheet("color: Crimson;")
+            # self._status_lbl.setStyleSheet("color: Crimson;")
 
         self._action_btn.setText("Request Access")
         self._action_btn.setEnabled(True)

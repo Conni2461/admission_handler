@@ -9,7 +9,7 @@ from src.utils.signals import (ON_BROADCAST_MESSAGE, ON_ENTRY_REQUEST,
                                ON_TCP_MESSAGE)
 from src.utils.tcp_handler import TCPHandler
 
-from ..utils.constants import LOGGING_LEVEL, MAX_TRIES, Intention
+from ..utils.constants import LOGGING_LEVEL, MAX_ENTRIES, MAX_TRIES, Intention
 from .signals import (ON_ACCESS_RESPONSE, ON_CLIENT_SHUTDOWN, ON_COUNT_CHANGED,
                       ON_REQUEST_ACCESS, ON_SERVER_CHANGED)
 
@@ -61,12 +61,12 @@ class Client:
 
     def _on_action_request(self, inc=True):
 
-        dispatcher.send(signal=ON_REQUEST_ACCESS, sender=self)
+        if inc:
+            dispatcher.send(signal=ON_REQUEST_ACCESS, sender=self)
 
         if self.server == None:
             self._logger.debug(f"Client No. {self.number} asked to request an action, but didn't have a server. Please try again.")
             msg = "Could not find a server. Please try again."
-            dispatcher.send(signal=ON_ACCESS_RESPONSE, sender=self, response={"message": msg, "status": False})
             self.find_server()
         else:
             mes = {
@@ -101,22 +101,20 @@ class Client:
             self.find_server()
         elif data["intention"] == str(Intention.ACCEPT_CLIENT):
             self._logger.info(f"Received random client accept message: {data}")
-        elif data["intention"] == ACCEPT_ENTRY:
+        elif data["intention"] == str(Intention.ACCEPT_ENTRY):
             msg = "Entry granted, please enjoy yourself!"
             self._logger.info(msg)
-            self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
             dispatcher.send(signal=ON_ACCESS_RESPONSE, sender=self, response={"status": True, "message": msg})
-            dispatcher.send(signal=ON_COUNT_CHANGED, sender=self, count=data["entries"])
 
-        elif data["intention"] == UPDATE_ENTRIES:
+        elif data["intention"] == str(Intention.UPDATE_ENTRIES):
             #TODO actually send this
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
             dispatcher.send(signal=ON_COUNT_CHANGED, sender=self, count=data["entries"])
-        elif data["intention"] == DENY_ENTRY:
+        elif data["intention"] == str(Intention.DENY_ENTRY):
             msg = "Entry denied. Seems like we are full, sorry."
             self._logger.info(msg)
             #TODO shut this client down here?
