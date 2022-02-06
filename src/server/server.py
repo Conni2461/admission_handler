@@ -178,7 +178,7 @@ class Server:
             json.loads(data.get("deliver_queue")),
         )
 
-    def _request_join(self):
+    def _request_join(self, rejoin=False):
         mes = {
             "intention": str(Intention.IDENT_SERVER),
             "uuid": f"{self._uuid}",
@@ -189,12 +189,13 @@ class Server:
         self._logger.info("Looking for a server group.")
         self._broadcast_handler.send(mes)
 
-        for _ in range(MAX_TRIES):
-            data, _ = self._tcp_handler.listen()
-            if data is not None:
-                if data.get("intention") == str(Intention.ACCEPT_SERVER):
-                    self._on_accepted(data)
-                    break
+        if not rejoin:
+            for _ in range(MAX_TRIES):
+                data, _ = self._tcp_handler.listen()
+                if data is not None:
+                    if data.get("intention") == str(Intention.ACCEPT_SERVER):
+                        self._on_accepted(data)
+                        break
 
         if self._state == State.PENDING:
             self._logger.info(
@@ -434,11 +435,14 @@ class Server:
             self._participating = False
             self._send_election_message(data)
 
+        else:
+            self._logger.warning("Looks like a new election. Todo: handle this")
+
     # heartbeat methods -------------------------------------------------------
 
     def _send_heartbeat(self):
         if not self._participating:
-            msg = {"intention": str(Intention.HEARTBEAT), "uuid": f"{self._uuid}", "clients": self._clients, "entries": self._entries}
+            msg = {"intention": str(Intention.HEARTBEAT), "uuid": f"{self._uuid}", "address": self._tcp_handler.address, "port": self._tcp_handler.port }
             if not self._tcp_handler.send(msg, self._group_view[self._current_leader]):
                 self._logger.warning("Leader seems to be offline, starting new election.")
                 self._start_election()
@@ -484,7 +488,7 @@ class Server:
 
         if len(self._group_view) == 1:
             self._logger.info("Looks like I am the only server.")
-            self._request_join()
+            self._request_join(rejoin=True)
 
     def _on_received_heartbeat(self, data):
         if data['uuid'] in self._group_view:
@@ -492,9 +496,9 @@ class Server:
             self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
         else:
             self._logger.warning(
-                f"Received heartbeat from {data['uuid']} who is not in group view."
+                f"Received heartbeat from {data['uuid']} who is not in group view.Will register them as a new member."
             )
-            # TODO: what happens here?
+            self._register_server(data)
 
     def _on_heartbeat_timeout(self, heartbeat_func):
         self._logger.debug(f"Heartbeat timed out, calling {heartbeat_func}.")
@@ -541,7 +545,7 @@ class Server:
         self._logger.info(f"Client {res['uuid']} is requesting an action.")
         self._requests.put(res)
         self._update_lock()
-    
+
     def _update_lock(self, data={"intention": "TODO"}): #TODO
         if self._lock == LockState.CLOSED:
             if data["intention"] == str(Intention.UNLOCK):
