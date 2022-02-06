@@ -289,7 +289,77 @@ class Server:
             prev_neighbor = neighbor
             success = self._tcp_handler.send(message, self._group_view[neighbor])
             if not success:
-                self._logger.warning(f"Could not send election message to {neighbor}.")
+
+    def _on_election_message(self, data):
+        self._logger.debug(f"Received an Election Message from {data['mid']}")
+        neighbor = self._get_neighbor()
+
+        if data["is_leader"]:
+            self._logger.debug(f"Message is a leader message.")
+            self._logger.info(f"Setting {data['mid']} to leader.")
+            self._current_leader = data["mid"]
+
+            if self._participating:
+                self._participating = False
+                if self._state == State.LEADER:
+                    self._set_leader(False)
+                self._state = State.MEMBER
+                self._logger.debug(f"Relaying leader message to {neighbor}.")
+                self._send_election_message(data)
+            else:
+                self._set_leader(True)
+
+                self._logger.debug(
+                    "Received my own leader message, will terminate the election."
+                )
+
+                self._logger.info("Updating group view.")
+                group_view = deepcopy(self._group_view)
+
+                for uuid, address in self._group_view.items():
+                    if not self._tcp_handler.send({"intention": str(Intention.PING)}, address):
+                        group_view.pop(uuid)
+
+                self._group_view = group_view
+
+                self._distribute_group_view()
+                if self._can_bzantine():
+                    self._rom_handler.pause()
+                    self._start_bzantine()
+            self._promote_monitoring_data()
+
+            return
+
+        if data["mid"] < self._uuid and not self._participating:
+            self._logger.debug("Currently not participating, joining election.")
+            data["mid"] = self._uuid
+            data["is_leader"] = False
+
+            self._participating = True
+            self._logger.debug(f"Sending election message on to {neighbor}.")
+            self._send_election_message(data)
+
+        elif data["mid"] > self._uuid:
+            self._logger.debug(
+                f"UUID is smaller than previous neighbor, relaying message to {neighbor}."
+            )
+            self._participating = True
+            self._send_election_message(data)
+
+        elif data["mid"] == self._uuid:
+            self._logger.debug(f"Received my own election message.")
+            self._logger.info("Declaring myself leader.")
+            self._logger.debug(f"Sending leader message to {neighbor}")
+            self._current_leader = self._uuid
+            data["mid"] = self._uuid
+            data["is_leader"] = True
+            self._participating = False
+            self._send_election_message(data)
+
+        else:
+            self._logger.warning("Looks like a new election. Todo: handle this")
+
+    # byzantine ---------------------------------------------------------------
 
     def _can_bzantine(self):
         n = len(self._group_view)
@@ -369,75 +439,6 @@ class Server:
             if not self._tcp_handler.send(om_new, self._group_view[self._current_leader]):
                 self._logger.warning(f"Could not send stop om to current leader")
 
-    def _on_election_message(self, data):
-        self._logger.debug(f"Received an Election Message from {data['mid']}")
-        neighbor = self._get_neighbor()
-
-        if data["is_leader"]:
-            self._logger.debug(f"Message is a leader message.")
-            self._logger.info(f"Setting {data['mid']} to leader.")
-            self._current_leader = data["mid"]
-
-            if self._participating:
-                self._participating = False
-                if self._state == State.LEADER:
-                    self._set_leader(False)
-                self._state = State.MEMBER
-                self._logger.debug(f"Relaying leader message to {neighbor}.")
-                self._send_election_message(data)
-            else:
-                self._set_leader(True)
-
-                self._logger.debug(
-                    "Received my own leader message, will terminate the election."
-                )
-
-                self._logger.info("Updating group view.")
-                group_view = deepcopy(self._group_view)
-
-                for uuid, address in self._group_view.items():
-                    if not self._tcp_handler.send({"intention": str(Intention.PING)}, address):
-                        group_view.pop(uuid)
-
-                self._group_view = group_view
-
-                self._distribute_group_view()
-                if self._can_bzantine():
-                    self._rom_handler.pause()
-                    self._start_bzantine()
-            self._promote_monitoring_data()
-
-            return
-
-        if data["mid"] < self._uuid and not self._participating:
-            self._logger.debug("Currently not participating, joining election.")
-            data["mid"] = self._uuid
-            data["is_leader"] = False
-
-            self._participating = True
-            self._logger.debug(f"Sending election message on to {neighbor}.")
-            self._send_election_message(data)
-
-        elif data["mid"] > self._uuid:
-            self._logger.debug(
-                f"UUID is smaller than previous neighbor, relaying message to {neighbor}."
-            )
-            self._participating = True
-            self._send_election_message(data)
-
-        elif data["mid"] == self._uuid:
-            self._logger.debug(f"Received my own election message.")
-            self._logger.info("Declaring myself leader.")
-            self._logger.debug(f"Sending leader message to {neighbor}")
-            self._current_leader = self._uuid
-            data["mid"] = self._uuid
-            data["is_leader"] = True
-            self._participating = False
-            self._send_election_message(data)
-
-        else:
-            self._logger.warning("Looks like a new election. Todo: handle this")
-
     # heartbeat methods -------------------------------------------------------
 
     def _send_heartbeat(self):
@@ -507,27 +508,7 @@ class Server:
         self._logger.debug(f"Heartbeat timed out, calling {heartbeat_func}.")
         heartbeat_func()
 
-    # other methods -----------------------------------------------------------
-
-    def _promote_monitoring_data(self):
-        msg = {"intention": str(Intention.MONITOR_MESSAGE), "uuid": self._uuid, "clients": self._clients, "election": self._participating, "state": self._state.name, "entries": self._entries}
-        self._broadcast_handler.send(msg)
-
-    def _set_leader(self, state=True):
-        if state:
-            self._state = State.LEADER
-            if self._heartbeat_timer is not None:
-                self._heartbeat_timer.cancel()
-            self._heartbeat_timer = RepeatTimer(
-                HEARTBEAT_TIMEOUT + 5, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._check_heartbeats}
-            )
-            self._heartbeat_timer.start()
-        else:
-            if self._heartbeat_timer is not None:
-                self._heartbeat_timer.cancel()
-            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._send_heartbeat}
-            )
-            self._heartbeat_timer.start()
+    # client methods ----------------------------------------------------------
 
     def _register_client(self, data):
         mes = {
@@ -589,6 +570,29 @@ class Server:
                 self._lock = LockState.OPEN
                 self._logger.info("Lock unlocked by me!")
 
+
+    # other methods -----------------------------------------------------------
+
+    def _promote_monitoring_data(self):
+        msg = {"intention": str(Intention.MONITOR_MESSAGE), "uuid": self._uuid, "clients": self._clients, "election": self._participating, "state": self._state.name, "entries": self._entries}
+        self._broadcast_handler.send(msg)
+
+    def _set_leader(self, state=True):
+        if state:
+            self._state = State.LEADER
+            if self._heartbeat_timer is not None:
+                self._heartbeat_timer.cancel()
+            self._heartbeat_timer = RepeatTimer(
+                HEARTBEAT_TIMEOUT + 5, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._check_heartbeats}
+            )
+            self._heartbeat_timer.start()
+        else:
+            if self._heartbeat_timer is not None:
+                self._heartbeat_timer.cancel()
+            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._send_heartbeat}
+            )
+            self._heartbeat_timer.start()
+
     # process methods ---------------------------------------------------------
 
     def _shut_down(self):
@@ -613,7 +617,6 @@ class Server:
         else:
             self._logger.debug("Broadcasting shutdown signal.")
             self._broadcast_handler.send(msg)
-
 
     def run(self):
 
