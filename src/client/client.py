@@ -1,24 +1,46 @@
 import logging
 import os
+import queue
 import sys
 import uuid
 
-from louie import dispatcher
 from src.utils.broadcast_handler import BroadcastHandler
 from src.utils.signals import (ON_BROADCAST_MESSAGE, ON_ENTRY_REQUEST,
                                ON_TCP_MESSAGE)
 from src.utils.tcp_handler import TCPHandler
 
+from ..utils.common import Invokeable, SocketThread
 from ..utils.constants import LOGGING_LEVEL, MAX_ENTRIES, MAX_TRIES, Intention
 from .signals import (ON_ACCESS_RESPONSE, ON_CLIENT_SHUTDOWN, ON_COUNT_CHANGED,
                       ON_REQUEST_ACCESS, ON_SERVER_CHANGED)
 
 
+class KeyboardListener(SocketThread):
+    def __init__(self, queue):
+        super().__init__(queue)
+
+    def run(self):
+        while not self.stopped:
+            if input("Please enter dec to decrease or anything else to send an entry request\n") == "dec":
+                self.emit(
+                    signal=ON_ENTRY_REQUEST,
+                    inc=False
+                )
+            else:
+                self.emit(
+                    signal=ON_ENTRY_REQUEST,
+                )
+
+
 class Client:
+
+    QUEUE = queue.SimpleQueue()
+    UI_QUEUE = queue.SimpleQueue()
+
     def __init__(self, number):
         """Set up handlers, uuid etc."""
-        self._tcp_listener = TCPHandler()
-        self._broadcast_handler = BroadcastHandler()
+        self._tcp_listener = TCPHandler(self.QUEUE)
+        self._broadcast_handler = BroadcastHandler(self.QUEUE)
         self._uuid = str(uuid.uuid4())
         # a human readable number for calling and verifying purposes
         self.number = number
@@ -27,15 +49,7 @@ class Client:
         self._logger = logging.getLogger(f"Client No. {self.number}") # with UUID {self._uuid}")
         self._logger.setLevel(LOGGING_LEVEL)
 
-        dispatcher.connect(
-            self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_listener
-        )
-        dispatcher.connect(
-            self._on_broadcast, signal=ON_BROADCAST_MESSAGE, sender=self._broadcast_handler
-        )
-        dispatcher.connect(
-            self._on_action_request, signal=ON_ENTRY_REQUEST, sender=self.number
-        )
+        self._keyboard_listener = KeyboardListener(self.QUEUE)
 
     def find_server(self):
         """Broadcast this clients existence to the system and register the first server that answers."""
@@ -56,13 +70,13 @@ class Client:
                     self._logger.debug(f"Recieved client accept message {data} from {add}")
                     self.server = (data.get("address"),data.get("port"))
                     self.entries = data["entries"]
-                    dispatcher.send(signal=ON_SERVER_CHANGED, sender=self, server=data["uuid"], count=self.entries or 0)
+                    self.UI_QUEUE.put(Invokeable(ON_SERVER_CHANGED, server=data["uuid"], count=self.entries or 0))
                     break
 
     def _on_action_request(self, inc=True):
 
         if inc:
-            dispatcher.send(signal=ON_REQUEST_ACCESS, sender=self)
+            self.UI_QUEUE.put(Invokeable(ON_REQUEST_ACCESS))
 
         if self.server == None:
             self._logger.debug(f"Client No. {self.number} asked to request an action, but didn't have a server. Please try again.")
@@ -84,7 +98,7 @@ class Client:
                 self.server = None
 
                 msg = "Could not connect to server. Please try again."
-                dispatcher.send(signal=ON_ACCESS_RESPONSE, sender=self, response={"message": msg, "status": False})
+                self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"message": msg, "status": False}))
                 self.find_server()
 
     #TODO potentially discard address in the handler
@@ -106,33 +120,35 @@ class Client:
             self._logger.info(msg)
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
-            dispatcher.send(signal=ON_ACCESS_RESPONSE, sender=self, response={"status": True, "message": msg})
+            self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"status": True, "message": msg}))
 
         elif data["intention"] == str(Intention.UPDATE_ENTRIES):
             #TODO actually send this
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
-            dispatcher.send(signal=ON_ACCESS_RESPONSE, sender=self, response={"status": True})
-            dispatcher.send(signal=ON_COUNT_CHANGED, sender=self, count=data["entries"])
+            self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"status": True}))
+            self.UI_QUEUE.put(Invokeable(ON_COUNT_CHANGED, count=data["entries"]))
         elif data["intention"] == str(Intention.DENY_ENTRY):
             msg = "Entry denied. Seems like we are full, sorry."
             self._logger.info(msg)
             #TODO shut this client down here?
 
-            dispatcher.send(signal=ON_ACCESS_RESPONSE, sender=self, response={"message": msg, "status": False})
+            self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"message": msg, "status": False}))
 
     def _shut_down(self):
+        self._keyboard_listener.join()
         self._tcp_listener.join()
         self._broadcast_handler.join()
 
-        dispatcher.send(signal=ON_CLIENT_SHUTDOWN, sender=self)
+        self.UI_QUEUE.put(Invokeable(ON_CLIENT_SHUTDOWN))
 
     def stop(self):
         raise KeyboardInterrupt
 
     def run(self):
         #TODO potentially make less spammy and include in normal routine
+
         while self.server == None:
             self._logger.debug(f"Client {self.number} trying to find a server.")
             self.find_server()
@@ -140,21 +156,21 @@ class Client:
         self._logger.debug(f"Connected to server {self.server}")
         self._tcp_listener.start()
         self._broadcast_handler.start()
+        self._keyboard_listener.start()
 
         try:
             while True:
-                if input("Please enter dec to decrease or anything else to send an entry request\n") == "dec":
-                    dispatcher.send(
-                        signal=ON_ENTRY_REQUEST,
-                        sender=self.number,
-                        inc=False
-                    )
-                else:
-                    #TODO outsource this?
-                    dispatcher.send(
-                        signal=ON_ENTRY_REQUEST,
-                        sender=self.number
-                    )
+                try:
+                    item = self.QUEUE.get(block=False)
+                    if item.signal == ON_TCP_MESSAGE:
+                        self._on_tcp_msg(**item.kwargs)
+                    elif item.signal == ON_BROADCAST_MESSAGE:
+                        self._on_broadcast(**item.kwargs)
+                    elif item.signal == ON_ENTRY_REQUEST:
+                        self._on_action_request(**item.kwargs)
+
+                except queue.Empty:
+                    pass
         except KeyboardInterrupt:
             self._logger.debug("Interrupted.")
             self._shut_down()

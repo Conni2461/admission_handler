@@ -196,7 +196,6 @@ class ROMulticastHandler(SocketThread):
 
         self.emit(
             signal=ON_MULTICAST_MESSAGE,
-            sender=self,
             data=mesg,
         )
 

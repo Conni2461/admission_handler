@@ -4,7 +4,6 @@ import signal
 import sys
 import threading
 
-from louie import dispatcher
 from PySide2 import QtCore, QtGui, QtWidgets
 
 from ..utils.broadcast_handler import BroadcastHandler
@@ -20,9 +19,10 @@ class UPDThread(QtCore.QThread):
     def __init__(self, queue, parent=None):
         super().__init__(parent)
         self._queue = queue
+        self._stopped = False
 
     def run(self):
-        while self.isRunning():
+        while not self._stopped:
             try:
                 item = self._queue.get(block=False)
                 if item.signal == ON_BROADCAST_MESSAGE:
@@ -31,6 +31,9 @@ class UPDThread(QtCore.QThread):
             except queue.Empty:
                 pass
 
+    def stop(self):
+        self._stopped = True
+        return self.wait()
 class Monitor(QtWidgets.QDialog):
 
     QUEUE = queue.SimpleQueue()
@@ -118,6 +121,10 @@ class Monitor(QtWidgets.QDialog):
 
             state_index = self._model.index(row, 4)
             self._model.setData(state_index, f'{server.get("state")}')
+
+    def closeEvent(self, event):
+        self._thread.stop()
+        super().closeEvent(event)
 
 def start_monitor():
     app = QtWidgets.QApplication().instance()

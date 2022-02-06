@@ -645,7 +645,7 @@ class Server:
                     elif item.signal == ON_BROADCAST_MESSAGE:
                         self._on_udp_msg(**item.kwargs)
                     elif item.signal == ON_MULTICAST_MESSAGE:
-                        self._on_rom_message(**item.kwargs)
+                        self._on_rom_msg(**item.kwargs)
                     elif item.signal == ON_HEARTBEAT_TIMEOUT:
                         self._on_heartbeat_timeout(**item.kwargs)
 

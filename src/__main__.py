@@ -26,7 +26,6 @@ if args.server:
 elif args.client:
     from .client.client import Client
 
-    #from louie import dispatcher
     #TODO do this better, currently only acceptable for testing
     number = randint(1,100)
     client = Client(number)
