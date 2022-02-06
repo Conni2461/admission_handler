@@ -1,10 +1,29 @@
 from threading import Thread, Timer
 
 
+class Invokeable:
+    def __init__(self, signal, *args, **kwargs):
+        self._signal = signal
+        self._args = args
+        self._kwargs = kwargs
+
+    @property
+    def signal(self):
+        return self._signal
+
+    @property
+    def kwargs(self):
+        return self._kwargs
+
 class SocketThread(Thread):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, queue):
         super().__init__()
         self.stopped = False
+        self._queue = queue
+
+    def emit(self, **kwargs):
+        signal = kwargs.pop("signal")
+        self._queue.put(Invokeable(signal, **kwargs))
 
     def join(self):
         self.stopped = True

@@ -3,19 +3,20 @@ import json
 import logging
 import math
 import os
+import queue
 import sys
+import time
 import uuid
 from collections import Counter
 from copy import deepcopy
 from queue import Queue
 
-from louie import dispatcher
 from src.utils.broadcast_handler import BroadcastHandler
 from src.utils.bzantine_tree import BzantineTree
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
 
-from ..utils.common import CircularList, RepeatTimer
+from ..utils.common import CircularList, Invokeable, RepeatTimer
 from ..utils.constants import (HEARTBEAT_TIMEOUT, LOGGING_LEVEL, MAX_ENTRIES,
                                MAX_TIMEOUTS, MAX_TRIES, Intention, LockState,
                                State)
@@ -25,6 +26,9 @@ from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_HEARTBEAT_TIMEOUT,
 logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.DEBUG)
 
 class Server:
+
+    QUEUE = queue.SimpleQueue()
+
     def __init__(self):
         """Set up handlers, uuid etc."""
         self._state = State.PENDING
@@ -35,9 +39,9 @@ class Server:
         self._heartbeats = {}
         self._heartbeat_timer = None
 
-        self._tcp_handler = TCPHandler()
-        self._broadcast_handler = BroadcastHandler()
-        self._rom_handler = ROMulticastHandler(str(self._uuid), self._group_view)
+        self._tcp_handler = TCPHandler(self.QUEUE)
+        self._broadcast_handler = BroadcastHandler(self.QUEUE)
+        self._rom_handler = ROMulticastHandler(str(self._uuid), self._group_view, self.QUEUE)
 
         self._logger = logging.getLogger(f"Server {self._uuid}")
         self._logger.setLevel(LOGGING_LEVEL)
@@ -50,19 +54,6 @@ class Server:
         self._bzantine_tree = None
         self._bzantine_results = None
         self._bzantine_results_counter = None
-
-        dispatcher.connect(
-            self._on_tcp_msg, signal=ON_TCP_MESSAGE, sender=self._tcp_handler
-        )
-        dispatcher.connect(
-            self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._broadcast_handler
-        )
-        dispatcher.connect(
-            self._on_rom_msg, signal=ON_MULTICAST_MESSAGE, sender=self._rom_handler
-        )
-        dispatcher.connect(
-            self._on_heartbeat_timeout, signal=ON_HEARTBEAT_TIMEOUT, sender=self
-        )
 
     # network message handler methods -----------------------------------------
 
@@ -120,6 +111,8 @@ class Server:
                 self._stop_bzantine(data)
             else:
                 self._on_bzantine_om(data)
+        elif data["intention"] == Intention.NOT_LEADER:
+            self._request_join(rejoin=True)
 
     def _on_rom_msg(self, data=None):
         if data == None:
@@ -197,16 +190,16 @@ class Server:
                         self._on_accepted(data)
                         break
 
-        if self._state == State.PENDING:
-            self._logger.info(
-                "Could not find a leader. Declaring myself."
-            )
-            self._set_leader(True)
-            self._group_view[self._uuid] = (
-                self._tcp_handler.address,
-                self._tcp_handler.port,
-            )
-            self._rom_handler.set_group_view(self._group_view)
+            if self._state == State.PENDING:
+                self._logger.info(
+                    "Could not find a leader. Declaring myself."
+                )
+                self._set_leader(True)
+                self._group_view[self._uuid] = (
+                    self._tcp_handler.address,
+                    self._tcp_handler.port,
+                )
+                self._rom_handler.set_group_view(self._group_view)
 
         self._promote_monitoring_data()
 
@@ -274,21 +267,32 @@ class Server:
         )
 
     def _send_election_message(self, message):
-        prev_neighbor = None
-        success = False
-        while not success:
-            neighbor = self._get_neighbor(prev_neighbor)
-            self._logger.info(f"Sending election message to {neighbor}.")
-            if neighbor == self._uuid:
-                self._logger.warning(
-                    "Could not find any available neighbors. Calling my own method."
-                )
-                self._on_election_message(message)
-                success = True
-                continue
-            prev_neighbor = neighbor
-            success = self._tcp_handler.send(message, self._group_view[neighbor])
+
+        neighbor = self._get_neighbor()
+        self._logger.info(f"Sending election message to {neighbor}.")
+        if neighbor == self._uuid:
+            self._logger.warning(
+                "Could not find any available neighbors. Calling my own method."
+            )
+            self._on_election_message(message)
+
+        else:
+            tries = 0
+            success = False
+            while tries <= 3:
+                success = self._tcp_handler.send(message, self._group_view[neighbor])
+                if success:
+                    break
+                self._logger.warning("Retrying..")
+                time.sleep(0.2)
+                tries += 1
+
             if not success:
+                self._logger.warning(f"Could not send election message to {neighbor}. Will start a new election.")
+
+                self._group_view.pop(neighbor)
+
+                self._start_election()
 
     def _on_election_message(self, data):
         self._logger.debug(f"Received an Election Message from {data['mid']}")
@@ -493,13 +497,13 @@ class Server:
 
     def _on_received_heartbeat(self, data):
         if self._state == State.LEADER:
-        if data['uuid'] in self._group_view:
-            self._logger.debug(f"Received heartbeat from {data['uuid']}.")
-            self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
-        else:
-            self._logger.warning(
+            if data['uuid'] in self._group_view:
+                self._logger.debug(f"Received heartbeat from {data['uuid']}.")
+                self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
+            else:
+                self._logger.warning(
                     f"Received heartbeat from {data['uuid']} who is not in group view. Will register them as a new member."
-            )
+                )
                 self._register_server()
         else:
             self._tcp_handler.send({"intention": Intention.NOT_LEADER}, (data['address'],data['port']))
@@ -583,13 +587,13 @@ class Server:
             if self._heartbeat_timer is not None:
                 self._heartbeat_timer.cancel()
             self._heartbeat_timer = RepeatTimer(
-                HEARTBEAT_TIMEOUT + 5, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._check_heartbeats}
+                HEARTBEAT_TIMEOUT + 5, self.QUEUE.put, args=[Invokeable(ON_HEARTBEAT_TIMEOUT, heartbeat_func=self._check_heartbeats)]
             )
             self._heartbeat_timer.start()
         else:
             if self._heartbeat_timer is not None:
                 self._heartbeat_timer.cancel()
-            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, dispatcher.send, kwargs={"signal": ON_HEARTBEAT_TIMEOUT, "sender": self, "heartbeat_func": self._send_heartbeat}
+            self._heartbeat_timer = RepeatTimer(HEARTBEAT_TIMEOUT, self.QUEUE.put, args=[Invokeable(ON_HEARTBEAT_TIMEOUT, heartbeat_func=self._send_heartbeat)]
             )
             self._heartbeat_timer.start()
 
@@ -634,7 +638,19 @@ class Server:
         self._logger.info("Running.")
         try:
             while True:
-                pass
+                try:
+                    item = self.QUEUE.get(block=False)
+                    if item.signal == ON_TCP_MESSAGE:
+                        self._on_tcp_msg(**item.kwargs)
+                    elif item.signal == ON_BROADCAST_MESSAGE:
+                        self._on_udp_msg(**item.kwargs)
+                    elif item.signal == ON_MULTICAST_MESSAGE:
+                        self._on_rom_message(**item.kwargs)
+                    elif item.signal == ON_HEARTBEAT_TIMEOUT:
+                        self._on_heartbeat_timeout(**item.kwargs)
+
+                except queue.Empty:
+                    pass
         except KeyboardInterrupt:
             self._logger.info("Shutting down...")
             self._shut_down()

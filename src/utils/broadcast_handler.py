@@ -5,7 +5,6 @@ import sys
 import uuid
 from collections import deque
 
-from louie import dispatcher
 from src.utils.common import SocketThread
 from src.utils.constants import (BROADCAST_PORT, BUFFER_SIZE, LOGGING_LEVEL,
                                  MAX_MSG_BUFF_SIZE, TIMEOUT)
@@ -17,9 +16,9 @@ class BroadcastHandler(SocketThread):
     For handling broadcasts for a participant.
     Expects and returns json data due to our implementation choices.
     """
-    def __init__(self):
+    def __init__(self, server_queue):
         """Set up a socket for this listener."""
-        super().__init__()
+        super().__init__(server_queue)
         self.listen_socket = socket.socket(
             socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
         )
@@ -74,9 +73,8 @@ class BroadcastHandler(SocketThread):
                     continue
                 else:
                     self._msg_buffer.append(loaded_data["msg_uuid"])
-                dispatcher.send(
+                self.emit(
                     signal=ON_BROADCAST_MESSAGE,
-                    sender=self,
                     data=loaded_data,
                     addr=addr,
                 )

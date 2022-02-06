@@ -7,9 +7,7 @@ import socket
 import struct
 import sys
 import uuid
-import queue
 
-from louie import dispatcher
 from src.utils.common import SocketThread
 from src.utils.constants import (LOGGING_LEVEL, MULTICAST_IP, MULTICAST_PORT,
                                  TIMEOUT, Intention, Purpose)
@@ -17,8 +15,8 @@ from src.utils.signals import ON_MULTICAST_MESSAGE
 
 
 class ROMulticastHandler(SocketThread):
-    def __init__(self, id, view, timeout=TIMEOUT):
-        super().__init__()
+    def __init__(self, id, view, server_queue, timeout=TIMEOUT):
+        super().__init__(server_queue)
         self._name = id
         self._snumber = 0
         self._rnumbers = {self._name: self._snumber}
@@ -190,14 +188,13 @@ class ROMulticastHandler(SocketThread):
             return
         elif mesg["purpose"] == str(Purpose.RESUME):
             self.resume(sendout=False)
-            dispatcher.send(
+            self.emit(
                 signal=ON_MULTICAST_MESSAGE,
-                sender=self,
                 data={"intention": str(Intention.OM_RESULT), "result": mesg["value"]},
             )
             return
 
-        dispatcher.send(
+        self.emit(
             signal=ON_MULTICAST_MESSAGE,
             sender=self,
             data=mesg,
