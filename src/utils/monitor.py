@@ -36,7 +36,7 @@ class Monitor(QtWidgets.QDialog):
 
     def _on_udp_msg(self, data=None, addr=None):
         if data["intention"] == str(Intention.MONITOR_MESSAGE):
-            if data.get("group_view"):
+            if data.get("group_view") is not None:
                 for key in data["group_view"]:
                     if not self._model.findItems(key):
                         self._add_server({"uuid": key})
