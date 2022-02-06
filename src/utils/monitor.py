@@ -67,12 +67,15 @@ class Monitor(QtWidgets.QDialog):
         election_item = QtGui.QStandardItem(f'{server.get("election")}')
         state_item = QtGui.QStandardItem(f'{server.get("state")}')
 
-        cnt = self._model.rowCount()
-        self._model.setItem(cnt, 0, item)
-        self._model.setItem(cnt, 1, clients_item)
-        self._model.setItem(cnt, 2, entries_item)
-        self._model.setItem(cnt, 3, election_item)
-        self._model.setItem(cnt, 4, state_item)
+        row = [
+            item,
+            clients_item,
+            entries_item,
+            election_item,
+            state_item,
+        ]
+
+        self._model.appendRow(row)
 
     def _update_server(self, server):
         for item in self._model.findItems(server["uuid"]):
