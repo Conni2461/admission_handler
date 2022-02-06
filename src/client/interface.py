@@ -63,24 +63,22 @@ class ClientUI(QtWidgets.QDialog):
         dispatcher.send(signal=ON_ENTRY_REQUEST,sender=self._client.number)
 
     def _on_count_changed(self, count):
-        print(f"Current entry count changed to: {count}.")
         self._count_lbl.setText(f"Current count: {count}/{MAX_ENTRIES}.")
 
     def _on_request_access(self):
-        print("Requesting Access...")
         self._action_btn.setEnabled(False)
         self._action_btn.setText("Requesting Access..")
 
     def _on_access_response(self, response):
         if response["status"]:
-            print("Access Granted!")
             self._action_btn.setText("Access Granted!")
-            self._status_lbl.setText(f"Last action: {response['message']}")
+            if response.get("message"):
+                self._status_lbl.setText(f"Last action: {response['message']}")
             # self._status_lbl.setStyleSheet("color: ForestGreen;")
         else:
-            print(response["message"])
             self._action_btn.setText("Access Denied!")
-            self._status_lbl.setText(f"Last action: {response['message']}.")
+            if response.get("message"):
+                self._status_lbl.setText(f"Last action: {response['message']}.")
             # self._status_lbl.setStyleSheet("color: Crimson;")
 
         self._action_btn.setText("Request Access")
