@@ -557,6 +557,12 @@ class Server:
                                     self._logger.info("Granted someone entry. Current count: " + str(self._entries) + " of " + str(MAX_ENTRIES))
                                 else:
                                     self._logger.warn("Failed to send entry acceptance to a client, ignoring the request!")
+                            else:
+                                mes = {
+                                    "intention": str(Intention.DENY_ENTRY),
+                                    "uuid": self._uuid
+                                    }
+                                self._tcp_handler.send(mes, (res["address"],res["port"]))
                         else:
                             self._entries -= 1
                             self._logger.info("Someone left the venue. Current count: " + str(self._entries) + " of " + str(MAX_ENTRIES))

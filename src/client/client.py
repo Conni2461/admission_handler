@@ -129,6 +129,7 @@ class Client:
 
             self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"status": True}))
             self.UI_QUEUE.put(Invokeable(ON_COUNT_CHANGED, count=data["entries"]))
+
         elif data["intention"] == str(Intention.DENY_ENTRY):
             msg = "Entry denied. Seems like we are full, sorry."
             self._logger.info(msg)

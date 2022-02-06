@@ -3,7 +3,6 @@ import queue
 import signal
 import sys
 import threading
-import time
 from typing import Optional
 
 from louie import dispatcher
@@ -59,6 +58,8 @@ class ClientUI(QtWidgets.QDialog):
         self._client = client
         self._client_listener = ClientListener(client.UI_QUEUE, self)
 
+        self._count = 0
+
         self._client_listener.count_changed.connect(self._on_count_changed)
         self._client_listener.request_access.connect(self._on_request_access)
         self._client_listener.access_response.connect(self._on_access_response)
@@ -99,6 +100,10 @@ class ClientUI(QtWidgets.QDialog):
         self._client.QUEUE.put(Invokeable(ON_ENTRY_REQUEST))
 
     def _on_count_changed(self, data):
+        if data['count'] < self._count:
+            self._status_lbl.setText("Someone has left the venue.")
+
+        self._count = int(data['count'])
         self._count_lbl.setText(f"Current count: {data['count']}/{MAX_ENTRIES}.")
 
     def _on_request_access(self, *args):
@@ -111,12 +116,9 @@ class ClientUI(QtWidgets.QDialog):
             self._action_btn.setText("Access Granted!")
             if response.get("message"):
                 self._status_lbl.setText(f"Last action: {response['message']}")
-            # self._status_lbl.setStyleSheet("color: ForestGreen;")
         else:
-            self._action_btn.setText("Access Denied!")
             if response.get("message"):
                 self._status_lbl.setText(f"Last action: {response['message']}.")
-            # self._status_lbl.setStyleSheet("color: Crimson;")
 
         self._action_btn.setText("Request Access")
         self._action_btn.setEnabled(True)
