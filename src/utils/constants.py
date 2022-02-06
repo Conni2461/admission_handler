@@ -41,6 +41,7 @@ class Intention(Enum):
     REQUEST_EXIT = 18
     LOCK = 19
     UNLOCK = 20
+    NOT_LEADER = 21
 
 class LockState(Enum):
     OPEN = 0

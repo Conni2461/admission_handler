@@ -491,14 +491,17 @@ class Server:
             self._request_join(rejoin=True)
 
     def _on_received_heartbeat(self, data):
+        if self._state == State.LEADER:
         if data['uuid'] in self._group_view:
             self._logger.debug(f"Received heartbeat from {data['uuid']}.")
             self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
         else:
             self._logger.warning(
-                f"Received heartbeat from {data['uuid']} who is not in group view.Will register them as a new member."
+                    f"Received heartbeat from {data['uuid']} who is not in group view. Will register them as a new member."
             )
-            self._register_server(data)
+                self._register_server()
+        else:
+            self._tcp_handler.send({"intention": Intention.NOT_LEADER}, (data['address'],data['port']))
 
     def _on_heartbeat_timeout(self, heartbeat_func):
         self._logger.debug(f"Heartbeat timed out, calling {heartbeat_func}.")
