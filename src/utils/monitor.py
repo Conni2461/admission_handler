@@ -1,23 +1,48 @@
 import os
+import queue
 import signal
 import sys
+import threading
 
 from louie import dispatcher
-from PySide2 import QtGui, QtWidgets
+from PySide2 import QtCore, QtGui, QtWidgets
 
 from ..utils.broadcast_handler import BroadcastHandler
 from ..utils.constants import Intention
 from ..utils.signals import ON_BROADCAST_MESSAGE
 
 os.environ['QT_MAC_WANTS_LAYER'] = '1'
+
+class UPDThread(QtCore.QThread):
+
+    udp_message = QtCore.Signal(object)
+
+    def __init__(self, queue, parent=None):
+        super().__init__(parent)
+        self._queue = queue
+
+    def run(self):
+        while self.isRunning():
+            try:
+                item = self._queue.get(block=False)
+                if item.signal == ON_BROADCAST_MESSAGE:
+                    self.udp_message.emit(item.kwargs["data"])
+
+            except queue.Empty:
+                pass
+
 class Monitor(QtWidgets.QDialog):
+
+    QUEUE = queue.SimpleQueue()
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._broadcast_handler = BroadcastHandler()
+        self._broadcast_handler = BroadcastHandler(self.QUEUE)
 
-        dispatcher.connect(
-                self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._broadcast_handler
-            )
+        self._thread = UPDThread(self.QUEUE, self)
+        self._thread.start()
+
+        self._thread.udp_message.connect(self._on_udp_msg)
 
         lyt = QtWidgets.QVBoxLayout(self)
 

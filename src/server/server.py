@@ -506,7 +506,7 @@ class Server:
                 )
                 self._register_server()
         else:
-            self._tcp_handler.send({"intention": Intention.NOT_LEADER}, (data['address'],data['port']))
+            self._tcp_handler.send({"intention": str(Intention.NOT_LEADER)}, (data['address'],data['port']))
 
     def _on_heartbeat_timeout(self, heartbeat_func):
         self._logger.debug(f"Heartbeat timed out, calling {heartbeat_func}.")
