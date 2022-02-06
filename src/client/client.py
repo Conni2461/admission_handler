@@ -113,6 +113,7 @@ class Client:
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
+            dispatcher.send(signal=ON_ACCESS_RESPONSE, sender=self, response={"status": True})
             dispatcher.send(signal=ON_COUNT_CHANGED, sender=self, count=data["entries"])
         elif data["intention"] == str(Intention.DENY_ENTRY):
             msg = "Entry denied. Seems like we are full, sorry."
