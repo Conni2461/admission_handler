@@ -1,24 +1,24 @@
 import datetime
 import json
 import logging
+import math
 import os
 import sys
 import uuid
-import math
-from copy import deepcopy
 from collections import Counter
+from copy import deepcopy
 from queue import Queue
 
 from louie import dispatcher
 from src.utils.broadcast_handler import BroadcastHandler
+from src.utils.bzantine_tree import BzantineTree
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
-from src.utils.bzantine_tree import BzantineTree
 
 from ..utils.common import CircularList, RepeatTimer
-from ..utils.constants import (HEARTBEAT_TIMEOUT,
-                               LOGGING_LEVEL, MAX_ENTRIES, MAX_TIMEOUTS,
-                               MAX_TRIES, LockState, State, Intention)
+from ..utils.constants import (HEARTBEAT_TIMEOUT, LOGGING_LEVEL, MAX_ENTRIES,
+                               MAX_TIMEOUTS, MAX_TRIES, Intention, LockState,
+                               State)
 from ..utils.signals import (ON_BROADCAST_MESSAGE, ON_HEARTBEAT_TIMEOUT,
                              ON_MULTICAST_MESSAGE, ON_TCP_MESSAGE)
 
@@ -494,6 +494,7 @@ class Server:
             self._logger.warning(
                 f"Received heartbeat from {data['uuid']} who is not in group view."
             )
+            # TODO: what happens here?
 
     def _on_heartbeat_timeout(self, heartbeat_func):
         self._logger.debug(f"Heartbeat timed out, calling {heartbeat_func}.")
