@@ -1,0 +1,29 @@
+\documentclass[runningheads]{llncs}
+
+\begin{document}
+
+\subsection{Dynamic Discovery} \label{dyndisc}
+A fresh server joins the system by broadcasting a join request.
+If it does not receive answers, it establishes itself as the new system with zero current guests.
+If it does get an answer, the number of arrivals is synchronized between servers.
+New clients join the system by broadcasting a request and establishing a TCP connection with the first server to answer them.
+
+\subsection{Ordered Reliable Multicast}
+Clients communicate newly arriving guests to their server and only allow passage if they get a positive response.
+To ensure a fair entry process and for possible other uses, arrivals are totally ordered.
+This is achieved by locking the number of entries upon an entry request using reliable ordered multi-cast.
+New arrivals are only permitted if they have been integrated in the total order and are not over capacity according to it.
+New entries are also communicated to all connected clients to ensure they display correctly how many free spots are left.
+
+\subsection{Voting}
+Is detailed in the implementation part.
+
+\subsection{Fault Tolerance}
+If a client does not receive an answer from its associated server, it tries to find a new one via the same process as a freshly joining one.
+If a server does not hear from a client, the TCP connection is simply purged.
+Each of the servers keeps the order (and number) of entries in memory so it can take over in case the leader fails.
+If a server loses an established connection to a system, it notifies connected clients and goes dormant until it is able to reestablish the connection.
+This ensures that the venue does not go over capacity from having two independent systems exist.
+Further details can be found in their respective implementation sections.
+
+\end{document}

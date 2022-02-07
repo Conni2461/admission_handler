@@ -1,14 +1,17 @@
 \documentclass[runningheads]{llncs}
+\usepackage{xr}
+\externaldocument{mrequirement_analysis}
 
 \begin{document}
 
 \subsection{Group Management} \label{grpmngmnt}
 
-The current group view is handled and kept up to date by the leader. Group view updates occur in the following cases:
+The current global group view is handled and kept up to date by the leader. Group view updates occur in the following cases:
 \begin{itemize}
     \item a member joins the group
     \item a member shuts down intentionally and notifies the leader
-    \item  a member fails to send a heartbeat to the leader for two intervals in a row.
+    \item a member fails to send a heartbeat to the leader for two intervals in a row.
+    \item an election has taken place and the leader re-evaluates the group view
 \end{itemize}
 Any changes on the group view trigger the leader to distribute the group view to all members of the group via TCP.
 
@@ -19,5 +22,9 @@ Heartbeats are used to monitor the status of the members of the group view. They
 Heartbeats are sent out by each member of the group to the leader via TCP. This action is performed by a threaded timer. Should the leader have shut down or crashed without notifying the group, the TCP connection will fail and the members of the group will trigger a new election. Parallel to this, the leader performs checks on the heartbeat dictionary it maintains. Also triggered by a threaded timer, the leader will check all registered group members and calculate the time difference between the current time and the latest heartbeat it has received from this member.
 
 Should a group member have failed to send a heartbeat for two intervals in a row, it is marked as failed and removed from the group view. Alternatively, if a heartbeat is received by a server that is not/ no longer in the group view, it will be notified and subsequently trigger a new registration process. If a heartbeat is received by a server that is not the leader, an election is triggered.
+
+\subsubsection{Rogue Leader} \label{rogueleader}
+Within the heartbeat checking method, the leader will check the the size of its group view. If this is equal to one (containing only itself) it will run the group join request method (\ref{dyndisc}). This ensures that a rogue leader, as in a leader that should no longer be a leader, will join the main group again, should it have dropped out fore some reason.
+
 
 \end{document}
