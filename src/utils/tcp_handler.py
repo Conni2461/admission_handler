@@ -3,10 +3,8 @@ import logging
 import socket
 import sys
 
-from louie import dispatcher
 from src.utils.common import SocketThread
-from src.utils.constants import (BUFFER_SIZE, LOGGING_LEVEL, MAX_TRIES,
-                                 TIMEOUT)
+from src.utils.constants import BUFFER_SIZE, LOGGING_LEVEL, MAX_TRIES, TIMEOUT
 from src.utils.signals import ON_TCP_MESSAGE
 
 
@@ -15,9 +13,9 @@ class TCPHandler(SocketThread):
     For handling the TCP connections of a participant.
     Expects and returns json data due to our implementation choices.
     """
-    def __init__(self, timeout=TIMEOUT):
+    def __init__(self, server_queue, timeout=TIMEOUT):
         """Set up a socket for this listener."""
-        super().__init__()
+        super().__init__(server_queue)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if sys.platform == 'win32':
             # when testing on windows 10, we were unable to bind to ""
@@ -111,9 +109,8 @@ class TCPHandler(SocketThread):
         while not self.stopped:
             data, addr = self.listen()
             if data:
-                dispatcher.send(
+                self.emit(
                     signal=ON_TCP_MESSAGE,
-                    sender=self,
                     data=data,
                     addr=addr,
                 )

@@ -1,23 +1,51 @@
 import os
+import queue
 import signal
 import sys
+import threading
 
-from louie import dispatcher
-from PySide2 import QtGui, QtWidgets
+from PySide2 import QtCore, QtGui, QtWidgets
 
 from ..utils.broadcast_handler import BroadcastHandler
 from ..utils.constants import Intention
 from ..utils.signals import ON_BROADCAST_MESSAGE
 
 os.environ['QT_MAC_WANTS_LAYER'] = '1'
+
+class UPDThread(QtCore.QThread):
+
+    udp_message = QtCore.Signal(object)
+
+    def __init__(self, queue, parent=None):
+        super().__init__(parent)
+        self._queue = queue
+        self._stopped = False
+
+    def run(self):
+        while not self._stopped:
+            try:
+                item = self._queue.get(block=False)
+                if item.signal == ON_BROADCAST_MESSAGE:
+                    self.udp_message.emit(item.kwargs["data"])
+
+            except queue.Empty:
+                pass
+
+    def stop(self):
+        self._stopped = True
+        return self.wait()
 class Monitor(QtWidgets.QDialog):
+
+    QUEUE = queue.SimpleQueue()
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._broadcast_handler = BroadcastHandler()
+        self._broadcast_handler = BroadcastHandler(self.QUEUE)
 
-        dispatcher.connect(
-                self._on_udp_msg, signal=ON_BROADCAST_MESSAGE, sender=self._broadcast_handler
-            )
+        self._thread = UPDThread(self.QUEUE, self)
+        self._thread.start()
+
+        self._thread.udp_message.connect(self._on_udp_msg)
 
         lyt = QtWidgets.QVBoxLayout(self)
 
@@ -36,7 +64,7 @@ class Monitor(QtWidgets.QDialog):
 
     def _on_udp_msg(self, data=None, addr=None):
         if data["intention"] == str(Intention.MONITOR_MESSAGE):
-            if data.get("group_view"):
+            if data.get("group_view") is not None:
                 for key in data["group_view"]:
                     if not self._model.findItems(key):
                         self._add_server({"uuid": key})
@@ -67,12 +95,15 @@ class Monitor(QtWidgets.QDialog):
         election_item = QtGui.QStandardItem(f'{server.get("election")}')
         state_item = QtGui.QStandardItem(f'{server.get("state")}')
 
-        cnt = self._model.rowCount()
-        self._model.setItem(cnt, 0, item)
-        self._model.setItem(cnt, 1, clients_item)
-        self._model.setItem(cnt, 2, entries_item)
-        self._model.setItem(cnt, 3, election_item)
-        self._model.setItem(cnt, 4, state_item)
+        row = [
+            item,
+            clients_item,
+            entries_item,
+            election_item,
+            state_item,
+        ]
+
+        self._model.appendRow(row)
 
     def _update_server(self, server):
         for item in self._model.findItems(server["uuid"]):
@@ -90,6 +121,10 @@ class Monitor(QtWidgets.QDialog):
 
             state_index = self._model.index(row, 4)
             self._model.setData(state_index, f'{server.get("state")}')
+
+    def closeEvent(self, event):
+        self._thread.stop()
+        super().closeEvent(event)
 
 def start_monitor():
     app = QtWidgets.QApplication().instance()
