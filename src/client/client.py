@@ -69,9 +69,19 @@ class Client:
                 if data.get("intention") == str(Intention.ACCEPT_CLIENT):
                     self._logger.debug(f"Recieved client accept message {data} from {add}")
                     self.server = (data.get("address"),data.get("port"))
-                    self.entries = data["entries"]
-                    self.UI_QUEUE.put(Invokeable(ON_SERVER_CHANGED, server=data["uuid"], count=self.entries or 0))
-                    break
+                    mes = {
+                        "intention": str(Intention.CHOOSE_SERVER),
+                        "uuid": self._uuid,
+                        "address": self._tcp_listener.address,
+                        "port": self._tcp_listener.port
+                    }
+                    if self._tcp_listener.send(mes, self.server):
+                        self.entries = data["entries"]
+                        self.UI_QUEUE.put(Invokeable(ON_SERVER_CHANGED, server=data["uuid"], count=self.entries or 0))
+                        break
+                    else:
+                        self.server = None
+                        self._logger.warn("Failed to notify chosen server, discarding choice!")
 
     def _on_action_request(self, inc=True):
 
@@ -105,9 +115,6 @@ class Client:
     def _on_broadcast(self, data=None, addr=None):
         if data["intention"] == str(Intention.SHUTDOWN_SYSTEM):
             self._shut_down()
-        elif data["intention"] == str(Intention.UPDATE_ENTRIES):
-            self.entries = data["entries"]
-            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
     def _on_tcp_msg(self, data=None, addr=None):
         if data["intention"] == str(Intention.SHUTDOWN_SERVER):
@@ -118,12 +125,10 @@ class Client:
         elif data["intention"] == str(Intention.ACCEPT_ENTRY):
             msg = "Entry granted, please enjoy yourself!"
             self._logger.info(msg)
-            self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
             self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"status": True, "message": msg}))
 
         elif data["intention"] == str(Intention.UPDATE_ENTRIES):
-            #TODO actually send this
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
@@ -139,6 +144,7 @@ class Client:
 
     def _shut_down(self):
         self._keyboard_listener.join()
+        self._tcp_listener.send({"intention": str(Intention.SHUTDOWN_CLIENT), "uuid": self._uuid},self.server)
         self._tcp_listener.join()
         self._broadcast_handler.join()
 

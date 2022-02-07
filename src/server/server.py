@@ -101,6 +101,12 @@ class Server:
             self._distribute_group_view()
         elif data["intention"] == str(Intention.HEARTBEAT):
             self._on_received_heartbeat(data)
+        elif data["intention"] == str(Intention.CHOOSE_SERVER):    
+            self._clients[data["uuid"]] = (data['address'],data['port'])
+            self._logger.info("Was chosen by client with uuid " + data["uuid"])
+        elif data["intention"] == str(Intention.SHUTDOWN_CLIENT):
+            self._clients.pop(data["uuid"])
+            self._logger.info("Client "+data["uuid"]+" shut down, removed it from client list.")
         elif data["intention"] == str(Intention.REQUEST_ACTION):
             self._on_request_action(data)
         elif data.get("intention") == str(Intention.ACCEPT_SERVER):
@@ -125,8 +131,7 @@ class Server:
         elif data["intention"] == str(Intention.UPDATE_ENTRIES) and data["uuid"] != self._uuid:
             self._entries = data["entries"]
             self._logger.info("Current Entries: " + str(self._entries) + " of " + str(MAX_ENTRIES))
-            for addr_and_port in self._clients.values():
-                self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port)
+            self._update_client_entries()
         else:
             self._logger.debug(f"TODO: Do something with rom message: {data}")
 
@@ -531,8 +536,19 @@ class Server:
         else:
             self._logger.warn("Failed to accept a client, seems to have already disappeared again!")
 
+    def _update_client_entries(self):
+        to_remove = []
+        for (uuid,addr_and_port) in self._clients.items():
+            if not self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port):
+                to_remove.insert(uuid)
+                self._logger.warn("Marking a client for removal due to failure of sending them a message")
+        for uuid in to_remove:
+            self._clients.pop(uuid)
+
     def _on_request_action(self,res):
-        self._clients[res["uuid"]] = (res['address'],res['port'])
+        if not self._clients.get(res["uuid"]):
+            self._clients[res["uuid"]] = (res["address"],res["port"])
+            self.info("Seems like a discarded client reconnected, readding it to the client list.")
         self._logger.info(f"Client {res['uuid']} is requesting an action.")
         self._requests.put(res)
         self._update_lock()
@@ -569,8 +585,7 @@ class Server:
                         else:
                             self._entries -= 1
                             self._logger.info("Someone left the venue. Current count: " + str(self._entries) + " of " + str(MAX_ENTRIES))
-                    for addr_and_port in self._clients.values():
-                        self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port)
+                    self._update_client_entries()
                     self._rom_handler.send({"uuid": self._uuid, "intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries})
                     self._rom_handler.send({"uuid": self._uuid, "intention": str(Intention.UNLOCK)})
                 else:
