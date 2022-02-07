@@ -208,6 +208,7 @@ class Server:
                     if data.get("intention") == str(Intention.ACCEPT_SERVER):
                         self._on_accepted(data)
                         break
+
                     if data.get("intention") == str(Intention.WAIT_FOR_LEADER):
                         self._logger.info("There is a leader but i need to wait till the group is ready. Waiting somewhat indefinitely")
                         max_tries = 10000
@@ -227,26 +228,31 @@ class Server:
         self._promote_monitoring_data()
 
     def _register_server(self, data, batch=False):
-        self._group_view[data["uuid"]] = (data["address"], data["port"])
+        if self._participating:
+            self._logger.info("Server is requesting to join, participating in an election, will tell it to try again.")
+            msg = {"intention": str(Intention.WAIT_FOR_LEADER)}
+            self._tcp_handler.send(msg, (data["address"], data["port"]))
+        else:
+            self._group_view[data["uuid"]] = (data["address"], data["port"])
 
-        welcome_msg = {
-            "intention": str(Intention.ACCEPT_SERVER),
-            "leader": f"{self._uuid}",
-            "group_view": self._group_view,
-            "rnumbers": json.dumps(self._rom_handler._rnumbers),
-            "deliver_queue": json.dumps(self._rom_handler._deliver_queue),
-            "entries": self._entries,
-        }
+            welcome_msg = {
+                "intention": str(Intention.ACCEPT_SERVER),
+                "leader": f"{self._uuid}",
+                "group_view": self._group_view,
+                "rnumbers": json.dumps(self._rom_handler._rnumbers),
+                "deliver_queue": json.dumps(self._rom_handler._deliver_queue),
+                "entries": self._entries,
+            }
 
-        self._rom_handler.register_new_member(data["uuid"])
-        if not self._tcp_handler.send(welcome_msg, self._group_view[data["uuid"]]):
-            #TODO handle this case?
-            self._logger.warn("Added a server to my groupview but was unable to send it a welcome message!")
-        self._logger.info(
-            "Received server join request from {}".format(
-                (data["address"], data["port"])
+            self._rom_handler.register_new_member(data["uuid"])
+            if not self._tcp_handler.send(welcome_msg, self._group_view[data["uuid"]]):
+                #TODO handle this case?
+                self._logger.warn("Added a server to my groupview but was unable to send it a welcome message!")
+            self._logger.info(
+                "Received server join request from {}".format(
+                    (data["address"], data["port"])
+                )
             )
-        )
 
         self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
 
@@ -308,7 +314,7 @@ class Server:
                 if success:
                     break
                 self._logger.warning("Retrying..")
-                time.sleep(0.2)
+                time.sleep(0.5)
                 tries += 1
 
             if not success:
@@ -325,9 +331,9 @@ class Server:
         if data["is_leader"]:
             self._logger.debug(f"Message is a leader message.")
             self._logger.info(f"Setting {data['mid']} to leader.")
-            self._current_leader = data["mid"]
 
             if self._participating:
+                self._current_leader = data["mid"]
                 self._participating = False
                 if self._state == State.LEADER:
                     self._set_leader(False)
@@ -335,25 +341,29 @@ class Server:
                 self._logger.debug(f"Relaying leader message to {neighbor}.")
                 self._send_election_message(data)
             else:
-                self._set_leader(True)
+                if self._uuid != data["mid"]:
+                    self._logger.warning("Received a leader message which is not my own even though I am not participating.")
+                    self._start_election()
+                else:
+                    self._set_leader(True)
 
-                self._logger.debug(
-                    "Received my own leader message, will terminate the election."
-                )
+                    self._logger.debug(
+                        "Received my own leader message, will terminate the election."
+                    )
 
-                self._logger.info("Updating group view.")
-                group_view = deepcopy(self._group_view)
+                    self._logger.info("Updating group view.")
+                    group_view = deepcopy(self._group_view)
 
-                for uuid, address in self._group_view.items():
-                    if not self._tcp_handler.send({"intention": str(Intention.PING)}, address):
-                        group_view.pop(uuid)
+                    for uuid, address in self._group_view.items():
+                        if not self._tcp_handler.send({"intention": str(Intention.PING)}, address):
+                            group_view.pop(uuid)
 
-                self._group_view = group_view
+                    self._group_view = group_view
 
-                self._distribute_group_view()
-                if self._can_byzantine():
-                    self._rom_handler.pause()
-                    self._start_byzantine()
+                    self._distribute_group_view()
+                    if self._can_byzantine():
+                        self._rom_handler.pause()
+                        self._start_byzantine()
             self._promote_monitoring_data()
 
             return
@@ -515,42 +525,45 @@ class Server:
 
     def _check_heartbeats(self):
 
-        self._logger.debug("Checking heartbeats.")
-
         self._promote_monitoring_data()
 
-        now = datetime.datetime.now().timestamp()
-        remove = []
-        for uuid in self._group_view.keys():
-            if uuid == self._uuid:
-                continue
-            latest_beat = self._heartbeats.get(uuid, {}).get("ts")
-            if latest_beat:
-                diff = now - latest_beat
-                if diff > HEARTBEAT_TIMEOUT:
-                    self._logger.debug(f"Node {uuid} has timed out.")
-                    self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
-                    if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
-                        self._logger.info(f"Node {uuid} has timed out twice in a row. Removing.")
-                        remove.append(uuid)
-            else:
-                self._logger.info(
-                    f"Node {uuid} does not appear to be in group view. Removing."
-                )
-                remove.append(uuid)
+        if self._participating:
+            self._logger.debug("Participating in an election. Not checking heartbeats.")
 
-        if remove:
-            for uid in remove:
-                if uid in self._group_view:
-                    self._group_view.pop(uid)
-                if uid in self._heartbeats:
-                    self._heartbeats.pop(uid)
-            self._distribute_group_view()
+        else:
+            self._logger.debug("Checking heartbeats.")
 
+            now = datetime.datetime.now().timestamp()
+            remove = []
+            for uuid in self._group_view.keys():
+                if uuid == self._uuid:
+                    continue
+                latest_beat = self._heartbeats.get(uuid, {}).get("ts")
+                if latest_beat:
+                    diff = now - latest_beat
+                    if diff > HEARTBEAT_TIMEOUT:
+                        self._logger.debug(f"Node {uuid} has timed out.")
+                        self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
+                        if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
+                            self._logger.info(f"Node {uuid} has timed out twice in a row. Removing.")
+                            remove.append(uuid)
+                else:
+                    self._logger.info(
+                        f"Node {uuid} does not appear to be in group view. Removing."
+                    )
+                    remove.append(uuid)
 
-        if len(self._group_view) == 1:
-            self._logger.info("Looks like I am the only server.")
-            self._request_join(rejoin=True)
+            if remove:
+                for uid in remove:
+                    if uid in self._group_view:
+                        self._group_view.pop(uid)
+                    if uid in self._heartbeats:
+                        self._heartbeats.pop(uid)
+                self._distribute_group_view()
+
+            if len(self._group_view) == 1:
+                self._logger.info("Looks like I am the only server.")
+                self._request_join(rejoin=True)
 
     def _on_received_heartbeat(self, data):
         if self._state == State.LEADER:
@@ -713,18 +726,21 @@ class Server:
         try:
             while True:
                 try:
-                    item = self.QUEUE.get(block=False)
-                    if item.signal == ON_TCP_MESSAGE:
-                        self._on_tcp_msg(**item.kwargs)
-                    elif item.signal == ON_BROADCAST_MESSAGE:
-                        self._on_udp_msg(**item.kwargs)
-                    elif item.signal == ON_MULTICAST_MESSAGE:
-                        self._on_rom_msg(**item.kwargs)
-                    elif item.signal == ON_HEARTBEAT_TIMEOUT:
-                        self._on_heartbeat_timeout(**item.kwargs)
+                    try:
+                        item = self.QUEUE.get(block=False)
+                        if item.signal == ON_TCP_MESSAGE:
+                            self._on_tcp_msg(**item.kwargs)
+                        elif item.signal == ON_BROADCAST_MESSAGE:
+                            self._on_udp_msg(**item.kwargs)
+                        elif item.signal == ON_MULTICAST_MESSAGE:
+                            self._on_rom_msg(**item.kwargs)
+                        elif item.signal == ON_HEARTBEAT_TIMEOUT:
+                            self._on_heartbeat_timeout(**item.kwargs)
 
-                except queue.Empty:
-                    pass
+                    except queue.Empty:
+                        pass
+                except Exception as e:
+                    self._logger.error(e)
         except KeyboardInterrupt:
             self._logger.info("Shutting down...")
             self._shut_down()
