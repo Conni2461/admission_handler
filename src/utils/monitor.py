@@ -58,6 +58,7 @@ class Monitor(QtWidgets.QDialog):
         self._view.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self._view.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
         self._view.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        self._view.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
         lyt.addWidget(self._view)
 
         self._broadcast_handler.start()
@@ -90,7 +91,7 @@ class Monitor(QtWidgets.QDialog):
 
     def _add_server(self, server):
         item = QtGui.QStandardItem(server["uuid"])
-        clients_item = QtGui.QStandardItem(f"{','.join([i for i in server.get('clients', [])])}")
+        clients_item = QtGui.QStandardItem('\n'.join([i for i in server.get('clients', [])]))
         entries_item = QtGui.QStandardItem(f'{server.get("entries")}')
         election_item = QtGui.QStandardItem(f'{server.get("election")}')
         state_item = QtGui.QStandardItem(f'{server.get("state")}')
@@ -111,7 +112,7 @@ class Monitor(QtWidgets.QDialog):
             row = index.row()
 
             clients_index = self._model.index(row, 1)
-            self._model.setData(clients_index, f"{','.join([i for i in server.get('clients', [])])}")
+            self._model.setData(clients_index, '\n'.join([i for i in server.get('clients', [])]))
 
             entries_index = self._model.index(row, 2)
             self._model.setData(entries_index, f'{server.get("entries")}')
