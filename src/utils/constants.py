@@ -44,6 +44,7 @@ class Intention(Enum):
     NOT_LEADER = 21
     CHOOSE_SERVER = 22
     SHUTDOWN_CLIENT = 23
+    WAIT_FOR_LEADER = 24
 
 class LockState(Enum):
     OPEN = 0
