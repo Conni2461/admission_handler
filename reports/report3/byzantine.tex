@@ -1,0 +1,64 @@
+\documentclass[runningheads]{llncs}
+
+\begin{document}
+
+\subsection{Byzantine Fault Tolerance} \label{byzantine}
+
+To support fault tolerance we decided to implement the byzantine algorithm. In
+the following, we will describe our implementation and explain how we handled
+some corner cases we stumbled across.
+
+\subsubsection{Procedure} \label{byzantineprocedure}
+
+Byzantine algorithm is a synchronous message based algorithm which is used to
+implement a form of fault tolerance. To implement a synchronous in our
+asynchronous distributed system we decided to move the system in a state where
+we can run this algorithm. For this we need to stop every reliable totally
+ordered multicast message which makes the system halt until its resumed again.
+This state change is initiated by the leader when a new server joins. If the
+system has 4 or more server, the minimum amount of servers for byzantine, the
+leader sends a pause multicast message via mutlicast to all participants in the
+system. This means that each server pauses application messages over reliable
+totally ordered multicast by putting them in a queue but not sending them. This
+allows us to still send internal messages over reliable totally ordered
+multicast, for example the resume message.
+
+When all servers are paused the leader initiates the byzantine algorithm by
+sending the byzantine message, named in the following $OM$ to all servers in
+the group. The message consists of an $v$ which we chose as the current entries
+on each server, the server destinations, which are all servers in the group
+minus the leader server, the list of servers which are passed, on initiation
+only the leader, and a $f = \lfloor (n - 1)/ 3 \rfloor$. This message will be
+send to all destinations, as previously defined, via tcp.
+
+On receiving of this message, each server will start a new tree, if not already
+started, where it keeps track of all received $OM$ messages. It removes itself
+from the list of destinations, adds himself to the beginning of the list of
+passed servers, does $f = f - 1$, adds his own entries count as $v$ and packs
+everything in a new message $OM'$ which will be send to all servers left in the
+destination list.
+
+This repeats until all messages are send and we end up with a tree on each
+server that is not the leader. We are then calculating the most common value
+for each level, starting at $f - 1$ and for node and select the most common one
+out of this list. This most common element will be send back to the leader
+which will then select the most common element from all answers and distribute
+the result with a resume multicast over reliable totally ordered multicast to
+all servers. Every server will then take the result as the new value for the
+current entries.
+
+If a TCP-Message is not being delivered we can asume that the connection to
+this server is lost and that the group view might have changed. Because of this
+we decided to restart the byzantine algorithm if there are still enought server
+in the group. This is done by sending a restart message the the current leader
+which will then start a new run with a new unique id. Making the old one
+invalid. So if a server receives a byzantine message with a new id that he
+doesn't know he has to discard the current tree and start a new one.
+
+If a new Server wants to join the group while byzantine is running the leader
+answers with a wait for message that signals the new server that there is a
+group but the group is not yet ready. The leader will then memorize that a new
+server wants to join and will accept that server as soon as the byzantine
+algorithm is done.
+
+\end{document}
