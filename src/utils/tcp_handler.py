@@ -42,7 +42,7 @@ class TCPHandler(SocketThread):
         return self._address
 
     def reset_timeout(self):
-        self._socket.settimeout()
+        self._socket.settimeout(TIMEOUT)
 
     def set_timeout(self, value):
         self._socket.settimeout(value)

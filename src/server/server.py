@@ -196,6 +196,7 @@ class Server:
             "port": self._tcp_handler.port
         }
 
+        self._broadcast_handler.send(mes)
         self._logger.info("Looking for a server group.")
 
         if not rejoin:
@@ -452,6 +453,7 @@ class Server:
         byzantine_id = om["id"]
         if self._byzantine_member_cache == None:
             self._logger.info("Started byzantine")
+            self._tcp_handler.set_timeout(2)
             self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
             self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
         else:
@@ -490,6 +492,7 @@ class Server:
 
         # Are we now done? Then complete the algorithm
         if self._byzantine_member_cache.tree.is_full():
+            self._tcp_handler.reset_timeout()
             res = self._byzantine_member_cache.tree.complete()
             self._byzantine_member_cache = None
             self._byzantine_history[byzantine_id] = ByzantineStates.FINISHED
