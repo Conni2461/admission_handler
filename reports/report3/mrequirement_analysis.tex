@@ -1,29 +1,39 @@
 \documentclass[runningheads]{llncs}
 
 \begin{document}
+\subsection{Basic Function}
+The admission system should be able to support a dynamic amount of servers and clients as well as them joining and leaving arbitrarily.
+A client connected to the system should receive updates on the current number of entries and inform new arrivals on whether their entry requests have been accepted or not.
+It should also be possible to inform the system of people leaving the venue and allowing more entries accordingly.
+The available servers should share the burden of servicing the clients by having the topographically closest (fastest to answer) server connect to each client.
 
 \subsection{Dynamic Discovery} \label{dyndisc}
-A fresh server joins the system by broadcasting a join request.
-If it does not receive answers, it establishes itself as the new system with zero current guests.
-If it does get an answer, the number of arrivals is synchronized between servers.
-New clients join the system by broadcasting a request and establishing a TCP connection with the first server to answer them.
+Both new Servers and new Clients should automatically discover and join an existing system or create one as necessary.
+To do this, a new participant should broadcast its existence and react to responses accordingly.
+In the case of a server, it should join an existing system by accepting the response to its broadcast and synchronize with the systems state, potentially triggering an election for a new leader.
+If there is no response, it should establish itself as the leader of a new system and react accordingly to other broadcasts.
+In the case of a client, it should establish a connection with the server that responded to it the fastest (from the clients perspective), or keep trying periodically until it gets a response.
+Finally, system participants that get cut off from others should automatically try to find a new system or server.
 
 \subsection{Ordered Reliable Multicast}
-Clients communicate newly arriving guests to their server and only allow passage if they get a positive response.
-To ensure a fair entry process and for possible other uses, arrivals are totally ordered.
-This is achieved by locking the number of entries upon an entry request using reliable ordered multi-cast.
-New arrivals are only permitted if they have been integrated in the total order and are not over capacity according to it.
-New entries are also communicated to all connected clients to ensure they display correctly how many free spots are left.
+To ensure a fair entry process, messages pertaining to the function of the system should be totally ordered by sending them via ordered reliable multicast.
+This way, all servers should be agreeing on the order - and thus acceptance - of newly arriving guests unless there are no problems (see Voting and Fault Tolerance).
 
 \subsection{Voting}
-Is detailed in the implementation part.
+Due to being a dynamic system, voting is needed to establish consensus on different topics.
+On one hand, the servers in a system should be able to agree on the current number of entries in case of desynchronization issues that occur even while counter measures are in place (see Locking).
+On the other hand they need to be able to vote on a leader that manages and updates the systems group view and initiates fault tolerance measures when needed.
 
 \subsection{Fault Tolerance}
 If a client does not receive an answer from its associated server, it tries to find a new one via the same process as a freshly joining one.
-If a server does not hear from a client, the TCP connection is simply purged.
-Each of the servers keeps the order (and number) of entries in memory so it can take over in case the leader fails.
-If a server loses an established connection to a system, it notifies connected clients and goes dormant until it is able to reestablish the connection.
-This ensures that the venue does not go over capacity from having two independent systems exist.
-Further details can be found in their respective implementation sections.
+If a server does not hear from a client, it should simply forget the client.
+Each of the servers should keep the current group view and number of entries in memory so it can take over in case the leader fails.
+If a server loses an established connection to a system, it should notify connected clients and go dormant until it is able to reestablish the connection.	%TODO Do we do this? Delete if we don't.
+This should ensure that the venue does not go over capacity from having two independent systems exist. %TODO
+If the system gets desynchronized, the current leader should run a byzantine agreement algorithm to reestablish consensus on the current number of admissions.
+
+\subsection{Locking}
+As part of the measures to avoid desynchronization issues, servers should acquire a lock on the current number of entries before updating it.
+They can then work through leave notifications and entry requests they received in the time until acquiring the lock before announcing the new number of entries and releasing the lock.
 
 \end{document}
