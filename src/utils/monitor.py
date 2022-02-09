@@ -51,7 +51,7 @@ class Monitor(QtWidgets.QDialog):
 
         self._model = QtGui.QStandardItemModel()
 
-        self._model.setHorizontalHeaderLabels(["Server", "Clients", "Entries", "Participating", "State"])
+        self._model.setHorizontalHeaderLabels(["Server", "Clients", "Entries", "Participating", "Byzantine", "State"])
 
         self._view = QtWidgets.QTableView()
         self._view.setModel(self._model)
@@ -95,12 +95,14 @@ class Monitor(QtWidgets.QDialog):
         entries_item = QtGui.QStandardItem(f'{server.get("entries")}')
         election_item = QtGui.QStandardItem(f'{server.get("election")}')
         state_item = QtGui.QStandardItem(f'{server.get("state")}')
+        byzantine_item = QtGui.QStandardItem(f'{server.get("byzantine")}')
 
         row = [
             item,
             clients_item,
             entries_item,
             election_item,
+            byzantine_item,
             state_item,
         ]
 
@@ -119,6 +121,9 @@ class Monitor(QtWidgets.QDialog):
 
             election_index = self._model.index(row, 3)
             self._model.setData(election_index, f'{server.get("election")}')
+
+            byzantine_index = self._model.index(row, 3)
+            self._model.setData(byzantine_index, f'{server.get("byzantine")}')
 
             state_index = self._model.index(row, 4)
             self._model.setData(state_index, f'{server.get("state")}')
