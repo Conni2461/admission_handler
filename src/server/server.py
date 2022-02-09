@@ -119,12 +119,6 @@ class Server:
             self._logger.info("Client "+data["uuid"]+" shut down, removed it from client list.")
         elif data["intention"] == str(Intention.REQUEST_ACTION):
             self._on_request_action(data)
-        elif data.get("intention") == str(Intention.ACCEPT_SERVER):
-            self._on_accepted(data)
-            self._promote_monitoring_data()
-        elif data.get("intention") == str(Intention.WAIT_FOR_LEADER):
-            # TODO(conni2461): do we need to catch accpet wait here as well?
-            self._logger.error("Do we need to handle WAIT FOR LEADER here as well? Der is no timeout here so its weird")
         elif data["intention"] == str(Intention.OM):
             if "v" not in data:
                 self._stop_byzantine(data)
@@ -195,6 +189,7 @@ class Server:
         )
 
     def _request_join(self, rejoin=False):
+        self._tcp_handler._paused = True
         mes = {
             "intention": str(Intention.IDENT_SERVER),
             "uuid": f"{self._uuid}",
@@ -217,6 +212,7 @@ class Server:
                         self._logger.info("There is a leader but i need to wait till the group is ready. Waiting somewhat indefinitely")
                         max_tries = 10000
 
+            self._tcp_handler._paused = False
             if self._state == State.PENDING:
                 self._logger.info(
                     "Could not find a leader. Declaring myself."
