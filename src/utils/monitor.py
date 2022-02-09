@@ -122,10 +122,10 @@ class Monitor(QtWidgets.QDialog):
             election_index = self._model.index(row, 3)
             self._model.setData(election_index, f'{server.get("election")}')
 
-            byzantine_index = self._model.index(row, 3)
+            byzantine_index = self._model.index(row, 4)
             self._model.setData(byzantine_index, f'{server.get("byzantine")}')
 
-            state_index = self._model.index(row, 4)
+            state_index = self._model.index(row, 5)
             self._model.setData(state_index, f'{server.get("state")}')
 
     def closeEvent(self, event):
