@@ -6,9 +6,9 @@ import os
 import queue
 import sys
 import time
-from uuid import uuid4
 from copy import deepcopy
 from queue import Queue
+from uuid import uuid4
 
 from src.utils.broadcast_handler import BroadcastHandler
 from src.utils.byzantine import (ByzantineLeaderCache, ByzantineMemberCache,
@@ -16,7 +16,7 @@ from src.utils.byzantine import (ByzantineLeaderCache, ByzantineMemberCache,
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
 
-from ..utils.common import CircularList, Invokeable, RepeatTimer
+from ..utils.common import CircularList, Invokeable, RepeatTimer, get_real_ip
 from ..utils.constants import (HEARTBEAT_TIMEOUT, LOGGING_LEVEL, MAX_ENTRIES,
                                MAX_TIMEOUTS, MAX_TRIES, Intention, LockState,
                                State)
@@ -38,6 +38,8 @@ class Server:
         self._participating = False
         self._heartbeats = {}
         self._heartbeat_timer = None
+
+        self._my_ip = get_real_ip()
 
         self._tcp_handler = TCPHandler(self.QUEUE)
         self._broadcast_handler = BroadcastHandler(self.QUEUE)
@@ -111,7 +113,7 @@ class Server:
             self._distribute_group_view()
         elif data["intention"] == str(Intention.HEARTBEAT):
             self._on_received_heartbeat(data)
-        elif data["intention"] == str(Intention.CHOOSE_SERVER):    
+        elif data["intention"] == str(Intention.CHOOSE_SERVER):
             self._clients[data["uuid"]] = (data['address'],data['port'])
             self._logger.info("Was chosen by client with uuid " + data["uuid"])
         elif data["intention"] == str(Intention.SHUTDOWN_CLIENT):
@@ -193,7 +195,7 @@ class Server:
         mes = {
             "intention": str(Intention.IDENT_SERVER),
             "uuid": f"{self._uuid}",
-            "address": self._tcp_handler.address,
+            "address": self._my_ip,
             "port": self._tcp_handler.port
         }
 
@@ -220,7 +222,7 @@ class Server:
                 )
                 self._set_leader(True)
                 self._group_view[self._uuid] = (
-                    self._tcp_handler.address,
+                    self._my_ip,
                     self._tcp_handler.port,
                 )
                 self._rom_handler.set_group_view(self._group_view)
@@ -514,7 +516,7 @@ class Server:
 
     def _send_heartbeat(self):
         if not self._participating:
-            msg = {"intention": str(Intention.HEARTBEAT), "uuid": f"{self._uuid}", "address": self._tcp_handler.address, "port": self._tcp_handler.port }
+            msg = {"intention": str(Intention.HEARTBEAT), "uuid": f"{self._uuid}", "address": self._my_ip, "port": self._tcp_handler.port }
             if not self._tcp_handler.send(msg, self._group_view[self._current_leader]):
                 self._logger.warning("Leader seems to be offline, starting new election.")
                 self._start_election()
@@ -588,7 +590,7 @@ class Server:
         mes = {
             "intention": str(Intention.ACCEPT_CLIENT),
             "uuid": self._uuid,
-            "address": self._tcp_handler.address,
+            "address": self._my_ip,
             "port": self._tcp_handler.port,
             "entries": self._entries
         }
