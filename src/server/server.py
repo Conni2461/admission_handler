@@ -66,7 +66,7 @@ class Server:
         if data.get("uuid") == self._uuid:
             return
         if (data["intention"] == str(Intention.IDENT_SERVER)) and (self._state == State.LEADER):
-            if self._byzantine_leader_cache is not None or self._participating:
+            if (self._byzantine_leader_cache is not None) or self._participating:
                 wait_for = {
                     "intention": str(Intention.TRY_AGAIN)
                 }
