@@ -53,8 +53,6 @@ class Server:
         self._lock = LockState.OPEN
         self._entries = 0
 
-        self._join_requests = []
-
         self._byzantine_leader_cache = None
         self._byzantine_member_cache = None
         self._byzantine_history = {}
@@ -68,10 +66,9 @@ class Server:
         if data.get("uuid") == self._uuid:
             return
         if (data["intention"] == str(Intention.IDENT_SERVER)) and (self._state == State.LEADER):
-            if self._byzantine_leader_cache is not None:
-                self._join_requests.append(data)
+            if self._byzantine_leader_cache is not None of self._participating:
                 wait_for = {
-                    "intention": str(Intention.WAIT_FOR_LEADER)
+                    "intention": str(Intention.TRY_AGAIN)
                 }
                 if not self._tcp_handler.send(wait_for, self._group_view[data["uuid"]]):
                     self._logger.warn("Wasn't able to answer with a wait for message")
@@ -200,20 +197,20 @@ class Server:
         }
 
         self._logger.info("Looking for a server group.")
-        self._broadcast_handler.send(mes)
 
         if not rejoin:
-            max_tries = MAX_TRIES
-            for _ in range(max_tries):
+            tries = 0
+            while tries < MAX_ENTRIES:
                 data, _ = self._tcp_handler.listen()
                 if data is not None:
                     if data.get("intention") == str(Intention.ACCEPT_SERVER):
                         self._on_accepted(data)
                         break
 
-                    if data.get("intention") == str(Intention.WAIT_FOR_LEADER):
-                        self._logger.info("There is a leader but i need to wait till the group is ready. Waiting somewhat indefinitely")
-                        max_tries = 10000
+                    if data.get("intention") == str(Intention.TRY_AGAIN):
+                        self._broadcast_handler.send(mes)
+                else:
+                    tries += 1
 
             self._tcp_handler._paused = False
             if self._state == State.PENDING:
@@ -230,31 +227,26 @@ class Server:
         self._promote_monitoring_data()
 
     def _register_server(self, data, batch=False):
-        if self._participating:
-            self._logger.info("Server is requesting to join, participating in an election, will tell it to try again.")
-            msg = {"intention": str(Intention.WAIT_FOR_LEADER)}
-            self._tcp_handler.send(msg, (data["address"], data["port"]))
-        else:
-            self._group_view[data["uuid"]] = (data["address"], data["port"])
+        self._group_view[data["uuid"]] = (data["address"], data["port"])
 
-            welcome_msg = {
-                "intention": str(Intention.ACCEPT_SERVER),
-                "leader": f"{self._uuid}",
-                "group_view": self._group_view,
-                "rnumbers": json.dumps(self._rom_handler._rnumbers),
-                "deliver_queue": json.dumps(self._rom_handler._deliver_queue),
-                "entries": self._entries,
-            }
+        welcome_msg = {
+            "intention": str(Intention.ACCEPT_SERVER),
+            "leader": f"{self._uuid}",
+            "group_view": self._group_view,
+            "rnumbers": json.dumps(self._rom_handler._rnumbers),
+            "deliver_queue": json.dumps(self._rom_handler._deliver_queue),
+            "entries": self._entries,
+        }
 
-            self._rom_handler.register_new_member(data["uuid"])
-            if not self._tcp_handler.send(welcome_msg, self._group_view[data["uuid"]]):
-                #TODO handle this case?
-                self._logger.warn("Added a server to my groupview but was unable to send it a welcome message!")
-            self._logger.info(
-                "Received server join request from {}".format(
-                    (data["address"], data["port"])
-                )
+        self._rom_handler.register_new_member(data["uuid"])
+        if not self._tcp_handler.send(welcome_msg, self._group_view[data["uuid"]]):
+            #TODO handle this case?
+            self._logger.warn("Added a server to my groupview but was unable to send it a welcome message!")
+        self._logger.info(
+            "Received server join request from {}".format(
+                (data["address"], data["port"])
             )
+        )
 
         self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
 
@@ -455,18 +447,16 @@ class Server:
             self._entries = mc[0][0]
             self._rom_handler.resume(value=mc[0][0])
 
-            while not len(self._join_requests) != 0:
-                batch = len(self._join_requests) != 1
-                self._register_server(self._join_requests.pop(), batch)
-
     def _on_byzantine_om(self, om):
         self._logger.debug(f"Received byzantine message: {om}")
         byzantine_id = om["id"]
         if self._byzantine_member_cache == None:
+            self._logger.info("Started byzantine")
             self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
             self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
         else:
             if byzantine_id not in self._byzantine_history and self._byzantine_member_cache.id != byzantine_id:
+                self._logger.info("Aborted and restarted byzantine")
                 self._byzantine_history[self._byzantine_member_cache.id] = ByzantineStates.ABORTED
                 self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
                 self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
