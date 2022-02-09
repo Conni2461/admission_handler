@@ -1,3 +1,4 @@
+import socket
 from threading import Thread, Timer
 
 
@@ -52,3 +53,8 @@ class RepeatTimer(Timer):
     def run(self):
         while not self.finished.wait(self.interval):
             self.function(*self.args, **self.kwargs)
+
+def get_real_ip():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.connect(('1.1.1.1', 1))
+    return sock.getsockname()[0]

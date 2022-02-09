@@ -42,6 +42,10 @@ class Intention(Enum):
     LOCK = 19
     UNLOCK = 20
     NOT_LEADER = 21
+    CHOOSE_SERVER = 22
+    SHUTDOWN_CLIENT = 23
+    TRY_AGAIN = 24
+    OM_RESTART = 25
 
 class LockState(Enum):
     OPEN = 0

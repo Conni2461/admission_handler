@@ -6,17 +6,17 @@ import os
 import queue
 import sys
 import time
-import uuid
-from collections import Counter
 from copy import deepcopy
 from queue import Queue
+from uuid import uuid4
 
 from src.utils.broadcast_handler import BroadcastHandler
-from src.utils.bzantine_tree import BzantineTree
+from src.utils.byzantine import (ByzantineLeaderCache, ByzantineMemberCache,
+                                 ByzantineStates)
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
 
-from ..utils.common import CircularList, Invokeable, RepeatTimer
+from ..utils.common import CircularList, Invokeable, RepeatTimer, get_real_ip
 from ..utils.constants import (HEARTBEAT_TIMEOUT, LOGGING_LEVEL, MAX_ENTRIES,
                                MAX_TIMEOUTS, MAX_TRIES, Intention, LockState,
                                State)
@@ -32,12 +32,14 @@ class Server:
     def __init__(self):
         """Set up handlers, uuid etc."""
         self._state = State.PENDING
-        self._uuid = str(uuid.uuid4())
+        self._uuid = str(uuid4())
         self._group_view = dict()
         self._current_leader = None
         self._participating = False
         self._heartbeats = {}
         self._heartbeat_timer = None
+
+        self._my_ip = get_real_ip()
 
         self._tcp_handler = TCPHandler(self.QUEUE)
         self._broadcast_handler = BroadcastHandler(self.QUEUE)
@@ -51,9 +53,9 @@ class Server:
         self._lock = LockState.OPEN
         self._entries = 0
 
-        self._bzantine_tree = None
-        self._bzantine_results = None
-        self._bzantine_results_counter = None
+        self._byzantine_leader_cache = None
+        self._byzantine_member_cache = None
+        self._byzantine_history = {}
 
     # network message handler methods -----------------------------------------
 
@@ -64,7 +66,14 @@ class Server:
         if data.get("uuid") == self._uuid:
             return
         if (data["intention"] == str(Intention.IDENT_SERVER)) and (self._state == State.LEADER):
-            self._register_server(data)
+            if (self._byzantine_leader_cache is not None) or self._participating:
+                wait_for = {
+                    "intention": str(Intention.TRY_AGAIN)
+                }
+                if not self._tcp_handler.send(wait_for, self._group_view[data["uuid"]]):
+                    self._logger.warn("Wasn't able to answer with a wait for message")
+            else:
+                self._register_server(data)
         elif data["intention"] == str(Intention.IDENT_CLIENT):
             self._register_client(data)
         elif data["intention"] == str(Intention.SHUTDOWN_SERVER):
@@ -101,16 +110,21 @@ class Server:
             self._distribute_group_view()
         elif data["intention"] == str(Intention.HEARTBEAT):
             self._on_received_heartbeat(data)
+        elif data["intention"] == str(Intention.CHOOSE_SERVER):
+            self._clients[data["uuid"]] = (data['address'],data['port'])
+            self._logger.info("Was chosen by client with uuid " + data["uuid"])
+        elif data["intention"] == str(Intention.SHUTDOWN_CLIENT):
+            self._clients.pop(data["uuid"])
+            self._logger.info("Client "+data["uuid"]+" shut down, removed it from client list.")
         elif data["intention"] == str(Intention.REQUEST_ACTION):
             self._on_request_action(data)
-        elif data.get("intention") == str(Intention.ACCEPT_SERVER):
-            self._on_accepted(data)
-            self._promote_monitoring_data()
         elif data["intention"] == str(Intention.OM):
             if "v" not in data:
-                self._stop_bzantine(data)
+                self._stop_byzantine(data)
             else:
-                self._on_bzantine_om(data)
+                self._on_byzantine_om(data)
+        elif data["intention"] == str(Intention.OM_RESTART):
+                self._start_byzantine(data["id"])
         elif data["intention"] == Intention.NOT_LEADER:
             self._request_join(rejoin=True)
 
@@ -125,8 +139,7 @@ class Server:
         elif data["intention"] == str(Intention.UPDATE_ENTRIES) and data["uuid"] != self._uuid:
             self._entries = data["entries"]
             self._logger.info("Current Entries: " + str(self._entries) + " of " + str(MAX_ENTRIES))
-            for addr_and_port in self._clients.values():
-                self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port)
+            self._update_client_entries()
         else:
             self._logger.debug(f"TODO: Do something with rom message: {data}")
 
@@ -175,38 +188,46 @@ class Server:
         )
 
     def _request_join(self, rejoin=False):
+        self._tcp_handler._paused = True
         mes = {
             "intention": str(Intention.IDENT_SERVER),
             "uuid": f"{self._uuid}",
-            "address": self._tcp_handler.address,
+            "address": self._my_ip,
             "port": self._tcp_handler.port
         }
 
-        self._logger.info("Looking for a server group.")
         self._broadcast_handler.send(mes)
+        self._logger.info("Looking for a server group.")
 
         if not rejoin:
-            for _ in range(MAX_TRIES):
+            tries = 0
+            while tries < MAX_ENTRIES:
                 data, _ = self._tcp_handler.listen()
                 if data is not None:
                     if data.get("intention") == str(Intention.ACCEPT_SERVER):
                         self._on_accepted(data)
                         break
 
+                    if data.get("intention") == str(Intention.TRY_AGAIN):
+                        self._broadcast_handler.send(mes)
+                else:
+                    tries += 1
+
+            self._tcp_handler._paused = False
             if self._state == State.PENDING:
                 self._logger.info(
                     "Could not find a leader. Declaring myself."
                 )
                 self._set_leader(True)
                 self._group_view[self._uuid] = (
-                    self._tcp_handler.address,
+                    self._my_ip,
                     self._tcp_handler.port,
                 )
                 self._rom_handler.set_group_view(self._group_view)
 
         self._promote_monitoring_data()
 
-    def _register_server(self, data):
+    def _register_server(self, data, batch=False):
         self._group_view[data["uuid"]] = (data["address"], data["port"])
 
         welcome_msg = {
@@ -228,20 +249,21 @@ class Server:
             )
         )
 
-        self._logger.debug("New group view is: {}".format(self._group_view))
-
         self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
-        self._distribute_group_view()
 
-        self._logger.debug("Checking election required.")
-        if self._election_required():
-            self._logger.info("Election is required, starting election.")
-            self._start_election()
-        else:
-            self._logger.debug("No election required.")
-            if self._can_bzantine():
-                self._rom_handler.pause()
-                self._start_bzantine()
+        if not batch:
+            self._logger.debug("New group view is: {}".format(self._group_view))
+            self._distribute_group_view()
+
+            self._logger.debug("Checking election required.")
+            if self._election_required():
+                self._logger.info("Election is required, starting election.")
+                self._start_election()
+            else:
+                self._logger.debug("No election required.")
+                if self._can_byzantine():
+                    self._rom_handler.pause()
+                    self._start_byzantine()
 
     # election methods --------------------------------------------------------
 
@@ -287,7 +309,7 @@ class Server:
                 if success:
                     break
                 self._logger.warning("Retrying..")
-                time.sleep(0.2)
+                time.sleep(0.5)
                 tries += 1
 
             if not success:
@@ -304,9 +326,9 @@ class Server:
         if data["is_leader"]:
             self._logger.debug(f"Message is a leader message.")
             self._logger.info(f"Setting {data['mid']} to leader.")
-            self._current_leader = data["mid"]
 
             if self._participating:
+                self._current_leader = data["mid"]
                 self._participating = False
                 if self._state == State.LEADER:
                     self._set_leader(False)
@@ -314,25 +336,29 @@ class Server:
                 self._logger.debug(f"Relaying leader message to {neighbor}.")
                 self._send_election_message(data)
             else:
-                self._set_leader(True)
+                if self._uuid != data["mid"]:
+                    self._logger.warning("Received a leader message which is not my own even though I am not participating.")
+                    self._start_election()
+                else:
+                    self._set_leader(True)
 
-                self._logger.debug(
-                    "Received my own leader message, will terminate the election."
-                )
+                    self._logger.debug(
+                        "Received my own leader message, will terminate the election."
+                    )
 
-                self._logger.info("Updating group view.")
-                group_view = deepcopy(self._group_view)
+                    self._logger.info("Updating group view.")
+                    group_view = deepcopy(self._group_view)
 
-                for uuid, address in self._group_view.items():
-                    if not self._tcp_handler.send({"intention": str(Intention.PING)}, address):
-                        group_view.pop(uuid)
+                    for uuid, address in self._group_view.items():
+                        if not self._tcp_handler.send({"intention": str(Intention.PING)}, address):
+                            group_view.pop(uuid)
 
-                self._group_view = group_view
+                    self._group_view = group_view
 
-                self._distribute_group_view()
-                if self._can_bzantine():
-                    self._rom_handler.pause()
-                    self._start_bzantine()
+                    self._distribute_group_view()
+                    if self._can_byzantine():
+                        self._rom_handler.pause()
+                        self._start_byzantine()
             self._promote_monitoring_data()
 
             return
@@ -368,19 +394,29 @@ class Server:
 
     # byzantine ---------------------------------------------------------------
 
-    def _can_bzantine(self):
+    def _can_byzantine(self):
         n = len(self._group_view)
         f = math.floor((n - 1) / 3)
         return f > 0
 
-    def _start_bzantine(self):
+    def _start_byzantine(self, id = None):
+        if id != None:
+            if self._byzantine_history[id] == ByzantineStates.ABORTED:
+                return
+
+            self._byzantine_history[id] = ByzantineStates.ABORTED
+
+        id = str(uuid4())
+        self._byzantine_leader_cache = ByzantineLeaderCache(id)
+        self._byzantine_history[self._byzantine_leader_cache.id] = ByzantineStates.STARTED
+
         v = self._entries
         n = len(self._group_view)
         f = math.floor((n - 1) / 3)
         if f == 0:
             return
 
-        self._logger.info("Starting bzantine algorithm")
+        self._logger.info("Starting byzantine algorithm")
         dests = list(set(self._group_view.keys()) - set([self._uuid]))
         om = {
             "intention": str(Intention.OM),
@@ -388,39 +424,50 @@ class Server:
             "dests": dests,
             "list": [self._uuid],
             "faulty": f,
+            "id": self._byzantine_leader_cache.id,
         }
         for uuid in dests:
             if not self._tcp_handler.send(om, self._group_view[uuid]):
                 self._logger.warning(f"Could not send om to: {uuid}.")
 
-    def _stop_bzantine(self, om):
-        if self._bzantine_results == None:
-            self._bzantine_results = []
-        if self._bzantine_results_counter == None:
-            self._bzantine_results_counter = Counter()
-        self._bzantine_results.append(om["from"])
-        self._bzantine_results_counter[om["result"]] += 1
+    def _stop_byzantine(self, om):
+        if self._byzantine_leader_cache == None:
+            self._logger.error(f"We shouldn't get byzantine messages. Byzantine isn't running: {om}")
+            return
+
+        self._byzantine_leader_cache.results.append(om["from"])
+        self._byzantine_leader_cache.counter[om["result"]] += 1
         leader_less_group = set(self._group_view.keys()) - set([self._uuid])
-        missing = leader_less_group - set(self._bzantine_results)
+        missing = leader_less_group - set(self._byzantine_leader_cache.results)
         if len(missing) == 0:
-            self._logger.info(f"Stopping bzantine algorithm")
-            mc = self._bzantine_results_counter.most_common()
+            self._logger.info(f"Stopping byzantine algorithm")
+            mc = self._byzantine_leader_cache.counter.most_common()
             self._logger.info("Resuming ROM")
-            self._bzantine_results = None
-            self._bzantine_results_counter = None
+            self._byzantine_leader_cache = None
+            self._byzantine_history[om["id"]] = ByzantineStates.FINISHED
             self._entries = mc[0][0]
             self._rom_handler.resume(value=mc[0][0])
 
-    def _on_bzantine_om(self, om):
-        self._logger.debug(f"Received bzantine message: {om}")
-        if self._bzantine_tree == None:
-            self._bzantine_tree = BzantineTree(len(self._group_view))
+    def _on_byzantine_om(self, om):
+        self._logger.debug(f"Received byzantine message: {om}")
+        byzantine_id = om["id"]
+        if self._byzantine_member_cache == None:
+            self._logger.info("Started byzantine")
+            self._tcp_handler.set_timeout(2)
+            self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
+            self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
+        else:
+            if byzantine_id not in self._byzantine_history and self._byzantine_member_cache.id != byzantine_id:
+                self._logger.info("Aborted and restarted byzantine")
+                self._byzantine_history[self._byzantine_member_cache.id] = ByzantineStates.ABORTED
+                self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
+                self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
 
-        if not self._bzantine_tree.is_full():
+        if not self._byzantine_member_cache.tree.is_full():
             dests = list(set(om["dests"]) - set([self._uuid]))
             l = om["list"]
             f = om["faulty"]
-            self._bzantine_tree.push(deepcopy(l), om["v"])
+            self._byzantine_member_cache.tree.push(deepcopy(l), om["v"])
             if f - 1 >= 0:
                 l.insert(0, self._uuid)
                 om_new = {
@@ -428,20 +475,32 @@ class Server:
                     "v": self._entries,
                     "dests": dests,
                     "list": l,
-                    "faulty": f - 1
+                    "faulty": f - 1,
+                    "id": byzantine_id,
                 }
                 for uuid in dests:
                     if not self._tcp_handler.send(om_new, self._group_view[uuid]):
-                        self._logger.warning(f"Could not send om to: {uuid}.")
+                        self._logger.warning(f"Could not send om to: {uuid}. Requesting byzantine restart")
+                        if self._current_leader != self._uuid:
+                            request = {
+                                "intention": str(Intention.OM_RESTART),
+                                "id": byzantine_id,
+                            }
+                            self._tcp_handler.send(request, self._group_view[self._current_leader])
+                        else:
+                            self._start_byzantine(byzantine_id)
 
         # Are we now done? Then complete the algorithm
-        if self._bzantine_tree.is_full():
-            res = self._bzantine_tree.complete()
-            self._bzantine_tree = None
+        if self._byzantine_member_cache.tree.is_full():
+            self._tcp_handler.reset_timeout()
+            res = self._byzantine_member_cache.tree.complete()
+            self._byzantine_member_cache = None
+            self._byzantine_history[byzantine_id] = ByzantineStates.FINISHED
             om_new = {
                 "intention": str(Intention.OM),
                 "from": self._uuid,
-                "result": res
+                "result": res,
+                "id": byzantine_id,
             }
             if not self._tcp_handler.send(om_new, self._group_view[self._current_leader]):
                 self._logger.warning(f"Could not send stop om to current leader")
@@ -450,7 +509,7 @@ class Server:
 
     def _send_heartbeat(self):
         if not self._participating:
-            msg = {"intention": str(Intention.HEARTBEAT), "uuid": f"{self._uuid}", "address": self._tcp_handler.address, "port": self._tcp_handler.port }
+            msg = {"intention": str(Intention.HEARTBEAT), "uuid": f"{self._uuid}", "address": self._my_ip, "port": self._tcp_handler.port }
             if not self._tcp_handler.send(msg, self._group_view[self._current_leader]):
                 self._logger.warning("Leader seems to be offline, starting new election.")
                 self._start_election()
@@ -461,42 +520,45 @@ class Server:
 
     def _check_heartbeats(self):
 
-        self._logger.debug("Checking heartbeats.")
-
         self._promote_monitoring_data()
 
-        now = datetime.datetime.now().timestamp()
-        remove = []
-        for uuid in self._group_view.keys():
-            if uuid == self._uuid:
-                continue
-            latest_beat = self._heartbeats.get(uuid, {}).get("ts")
-            if latest_beat:
-                diff = now - latest_beat
-                if diff > HEARTBEAT_TIMEOUT:
-                    self._logger.debug(f"Node {uuid} has timed out.")
-                    self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
-                    if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
-                        self._logger.info(f"Node {uuid} has timed out twice in a row. Removing.")
-                        remove.append(uuid)
-            else:
-                self._logger.info(
-                    f"Node {uuid} does not appear to be in group view. Removing."
-                )
-                remove.append(uuid)
+        if self._participating:
+            self._logger.debug("Participating in an election. Not checking heartbeats.")
 
-        if remove:
-            for uid in remove:
-                if uid in self._group_view:
-                    self._group_view.pop(uid)
-                if uid in self._heartbeats:
-                    self._heartbeats.pop(uid)
-            self._distribute_group_view()
+        else:
+            self._logger.debug("Checking heartbeats.")
 
+            now = datetime.datetime.now().timestamp()
+            remove = []
+            for uuid in self._group_view.keys():
+                if uuid == self._uuid:
+                    continue
+                latest_beat = self._heartbeats.get(uuid, {}).get("ts")
+                if latest_beat:
+                    diff = now - latest_beat
+                    if diff > HEARTBEAT_TIMEOUT:
+                        self._logger.debug(f"Node {uuid} has timed out.")
+                        self._heartbeats[uuid]["strikes"] = self._heartbeats[uuid]["strikes"] +1
+                        if self._heartbeats[uuid]["strikes"] >= MAX_TIMEOUTS:
+                            self._logger.info(f"Node {uuid} has timed out twice in a row. Removing.")
+                            remove.append(uuid)
+                else:
+                    self._logger.info(
+                        f"Node {uuid} does not appear to be in group view. Removing."
+                    )
+                    remove.append(uuid)
 
-        if len(self._group_view) == 1:
-            self._logger.info("Looks like I am the only server.")
-            self._request_join(rejoin=True)
+            if remove:
+                for uid in remove:
+                    if uid in self._group_view:
+                        self._group_view.pop(uid)
+                    if uid in self._heartbeats:
+                        self._heartbeats.pop(uid)
+                self._distribute_group_view()
+
+            if len(self._group_view) == 1:
+                self._logger.info("Looks like I am the only server.")
+                self._request_join(rejoin=True)
 
     def _on_received_heartbeat(self, data):
         if self._state == State.LEADER:
@@ -507,7 +569,7 @@ class Server:
                 self._logger.warning(
                     f"Received heartbeat from {data['uuid']} who is not in group view. Will register them as a new member."
                 )
-                self._register_server()
+                self._register_server(data)
         else:
             self._tcp_handler.send({"intention": str(Intention.NOT_LEADER)}, (data['address'],data['port']))
 
@@ -521,7 +583,7 @@ class Server:
         mes = {
             "intention": str(Intention.ACCEPT_CLIENT),
             "uuid": self._uuid,
-            "address": self._tcp_handler.address,
+            "address": self._my_ip,
             "port": self._tcp_handler.port,
             "entries": self._entries
         }
@@ -531,8 +593,19 @@ class Server:
         else:
             self._logger.warn("Failed to accept a client, seems to have already disappeared again!")
 
+    def _update_client_entries(self):
+        to_remove = []
+        for (uuid,addr_and_port) in self._clients.items():
+            if not self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port):
+                to_remove.append(uuid)
+                self._logger.warn("Marking a client for removal due to failure of sending them a message")
+        for uuid in to_remove:
+            self._clients.pop(uuid)
+
     def _on_request_action(self,res):
-        self._clients[res["uuid"]] = (res['address'],res['port'])
+        if not self._clients.get(res["uuid"]):
+            self._clients[res["uuid"]] = (res["address"],res["port"])
+            self._logger.info("Seems like a discarded client reconnected, readding it to the client list.")
         self._logger.info(f"Client {res['uuid']} is requesting an action.")
         self._requests.put(res)
         self._update_lock()
@@ -569,8 +642,7 @@ class Server:
                         else:
                             self._entries -= 1
                             self._logger.info("Someone left the venue. Current count: " + str(self._entries) + " of " + str(MAX_ENTRIES))
-                    for addr_and_port in self._clients.values():
-                        self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port)
+                    self._update_client_entries()
                     self._rom_handler.send({"uuid": self._uuid, "intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries})
                     self._rom_handler.send({"uuid": self._uuid, "intention": str(Intention.UNLOCK)})
                 else:
@@ -622,7 +694,8 @@ class Server:
         #TODO currently doesn't work
         self._rom_handler.join()
         self._logger.debug("Stopping heartbeat timer.")
-        self._heartbeat_timer.cancel()
+        if self._heartbeat_timer is not None:
+            self._heartbeat_timer.cancel()
 
         if leader_address and self._current_leader != self._uuid:
             self._logger.debug("Sending shutdown signal to leader.")
@@ -648,18 +721,21 @@ class Server:
         try:
             while True:
                 try:
-                    item = self.QUEUE.get(block=False)
-                    if item.signal == ON_TCP_MESSAGE:
-                        self._on_tcp_msg(**item.kwargs)
-                    elif item.signal == ON_BROADCAST_MESSAGE:
-                        self._on_udp_msg(**item.kwargs)
-                    elif item.signal == ON_MULTICAST_MESSAGE:
-                        self._on_rom_msg(**item.kwargs)
-                    elif item.signal == ON_HEARTBEAT_TIMEOUT:
-                        self._on_heartbeat_timeout(**item.kwargs)
+                    try:
+                        item = self.QUEUE.get(block=False)
+                        if item.signal == ON_TCP_MESSAGE:
+                            self._on_tcp_msg(**item.kwargs)
+                        elif item.signal == ON_BROADCAST_MESSAGE:
+                            self._on_udp_msg(**item.kwargs)
+                        elif item.signal == ON_MULTICAST_MESSAGE:
+                            self._on_rom_msg(**item.kwargs)
+                        elif item.signal == ON_HEARTBEAT_TIMEOUT:
+                            self._on_heartbeat_timeout(**item.kwargs)
 
-                except queue.Empty:
-                    pass
+                    except queue.Empty:
+                        pass
+                except Exception as e:
+                    self._logger.error(e)
         except KeyboardInterrupt:
             self._logger.info("Shutting down...")
             self._shut_down()
