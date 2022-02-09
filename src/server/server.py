@@ -51,7 +51,7 @@ class Server:
         self._lock = LockState.OPEN
         self._entries = 0
 
-        self._join_requests = queue.Queue()
+        self._join_requests = []
 
         self._byzantine_leader_cache = None
         self._byzantine_member_cache = None
@@ -67,7 +67,7 @@ class Server:
             return
         if (data["intention"] == str(Intention.IDENT_SERVER)) and (self._state == State.LEADER):
             if self._byzantine_leader_cache is not None:
-                self._join_requests.put(data)
+                self._join_requests.append(data)
                 wait_for = {
                     "intention": str(Intention.WAIT_FOR_LEADER)
                 }
@@ -226,7 +226,7 @@ class Server:
 
         self._promote_monitoring_data()
 
-    def _register_server(self, data):
+    def _register_server(self, data, batch=False):
         self._group_view[data["uuid"]] = (data["address"], data["port"])
 
         welcome_msg = {
@@ -248,20 +248,21 @@ class Server:
             )
         )
 
-        self._logger.debug("New group view is: {}".format(self._group_view))
-
         self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
-        self._distribute_group_view()
 
-        self._logger.debug("Checking election required.")
-        if self._election_required():
-            self._logger.info("Election is required, starting election.")
-            self._start_election()
-        else:
-            self._logger.debug("No election required.")
-            if self._can_byzantine():
-                self._rom_handler.pause()
-                self._start_byzantine()
+        if not batch:
+            self._logger.debug("New group view is: {}".format(self._group_view))
+            self._distribute_group_view()
+
+            self._logger.debug("Checking election required.")
+            if self._election_required():
+                self._logger.info("Election is required, starting election.")
+                self._start_election()
+            else:
+                self._logger.debug("No election required.")
+                if self._can_byzantine():
+                    self._rom_handler.pause()
+                    self._start_byzantine()
 
     # election methods --------------------------------------------------------
 
@@ -442,11 +443,9 @@ class Server:
             self._entries = mc[0][0]
             self._rom_handler.resume(value=mc[0][0])
 
-            # Pretty sure we should only pop one at the time because otherwise
-            # We could run into the situation that there are too many servers
-            # who might inject wrong data into the tree
-            if not self._join_requests.empty():
-                self._register_server(self._join_requests.get())
+            while not len(self._join_requests) != 0:
+                batch = len(self._join_requests) != 1
+                self._register_server(self._join_requests.pop(), batch)
 
     def _on_byzantine_om(self, om):
         self._logger.debug(f"Received byzantine message: {om}")
@@ -590,7 +589,7 @@ class Server:
         to_remove = []
         for (uuid,addr_and_port) in self._clients.items():
             if not self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port):
-                to_remove.insert(uuid)
+                to_remove.append(uuid)
                 self._logger.warn("Marking a client for removal due to failure of sending them a message")
         for uuid in to_remove:
             self._clients.pop(uuid)
@@ -598,7 +597,7 @@ class Server:
     def _on_request_action(self,res):
         if not self._clients.get(res["uuid"]):
             self._clients[res["uuid"]] = (res["address"],res["port"])
-            self.info("Seems like a discarded client reconnected, readding it to the client list.")
+            self._logger.info("Seems like a discarded client reconnected, readding it to the client list.")
         self._logger.info(f"Client {res['uuid']} is requesting an action.")
         self._requests.put(res)
         self._update_lock()
@@ -687,7 +686,8 @@ class Server:
         #TODO currently doesn't work
         self._rom_handler.join()
         self._logger.debug("Stopping heartbeat timer.")
-        self._heartbeat_timer.cancel()
+        if self._heartbeat_timer is not None:
+            self._heartbeat_timer.cancel()
 
         if leader_address and self._current_leader != self._uuid:
             self._logger.debug("Sending shutdown signal to leader.")
