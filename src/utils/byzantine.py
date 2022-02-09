@@ -1,13 +1,16 @@
 import math
 from collections import Counter
+from enum import Enum
 
-class BzantineNode:
+
+class ByzantineNode:
     def __init__(self, l, v):
         self.l = l
         self.v = v
         self.children = []
 
-class BzantineTree:
+
+class ByzantineTree:
     def __init__(self, n):
         self._n = n
         self._height = math.floor((self._n - 1) / 3) + 1
@@ -17,7 +20,7 @@ class BzantineTree:
     def push(self, l, v):
         self._len += 1
         if self._head == None:
-            self._head = BzantineNode(l, v)
+            self._head = ByzantineNode(l, v)
             return
 
         current = self._head
@@ -27,12 +30,12 @@ class BzantineTree:
                     current = curr_child
                     break
 
-        current.children.append(BzantineNode(l, v))
+        current.children.append(ByzantineNode(l, v))
 
     def is_full(self):
         max = 1
         for i in range(1, self._height):
-            max *= (self._n - (i + 1))
+            max *= self._n - (i + 1)
 
         return (self._len - 1) == max
 
@@ -55,3 +58,22 @@ class BzantineTree:
 
         mc = c.most_common()
         return mc[0][0]
+
+
+class ByzantineLeaderCache:
+    def __init__(self, id):
+        self.id = id
+        self.results = []
+        self.counter = Counter()
+
+
+class ByzantineMemberCache:
+    def __init__(self, id, n):
+        self.id = id
+        self.tree = ByzantineTree(n)
+
+
+class ByzantineStates(Enum):
+    STARTED = 0
+    FINISHED = 1
+    ABORTED = 2

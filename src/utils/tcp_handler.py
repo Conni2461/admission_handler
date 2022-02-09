@@ -27,6 +27,7 @@ class TCPHandler(SocketThread):
         self._port = socketname[1]
         self._socket.settimeout(timeout)
         self._open = True
+        self._paused = False
 
         self._logger = logging.getLogger(f"TCPListener")
         self._logger.setLevel(LOGGING_LEVEL)
@@ -107,13 +108,14 @@ class TCPHandler(SocketThread):
     def run(self):
         self._logger.debug("Listening to tcp messages")
         while not self.stopped:
-            data, addr = self.listen()
-            if data:
-                self.emit(
-                    signal=ON_TCP_MESSAGE,
-                    data=data,
-                    addr=addr,
-                )
+            if not self._paused:
+                data, addr = self.listen()
+                if data:
+                    self.emit(
+                        signal=ON_TCP_MESSAGE,
+                        data=data,
+                        addr=addr,
+                    )
 
         self._logger.debug("Shutting down.")
         self.close()

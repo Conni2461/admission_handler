@@ -6,13 +6,13 @@ import os
 import queue
 import sys
 import time
-import uuid
-from collections import Counter
+from uuid import uuid4
 from copy import deepcopy
 from queue import Queue
 
 from src.utils.broadcast_handler import BroadcastHandler
-from src.utils.bzantine_tree import BzantineTree
+from src.utils.byzantine import (ByzantineLeaderCache, ByzantineMemberCache,
+                                 ByzantineStates)
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
 
@@ -32,7 +32,7 @@ class Server:
     def __init__(self):
         """Set up handlers, uuid etc."""
         self._state = State.PENDING
-        self._uuid = str(uuid.uuid4())
+        self._uuid = str(uuid4())
         self._group_view = dict()
         self._current_leader = None
         self._participating = False
@@ -51,9 +51,11 @@ class Server:
         self._lock = LockState.OPEN
         self._entries = 0
 
-        self._bzantine_tree = None
-        self._bzantine_results = None
-        self._bzantine_results_counter = None
+        self._join_requests = []
+
+        self._byzantine_leader_cache = None
+        self._byzantine_member_cache = None
+        self._byzantine_history = {}
 
     # network message handler methods -----------------------------------------
 
@@ -64,7 +66,15 @@ class Server:
         if data.get("uuid") == self._uuid:
             return
         if (data["intention"] == str(Intention.IDENT_SERVER)) and (self._state == State.LEADER):
-            self._register_server(data)
+            if self._byzantine_leader_cache is not None:
+                self._join_requests.append(data)
+                wait_for = {
+                    "intention": str(Intention.WAIT_FOR_LEADER)
+                }
+                if not self._tcp_handler.send(wait_for, self._group_view[data["uuid"]]):
+                    self._logger.warn("Wasn't able to answer with a wait for message")
+            else:
+                self._register_server(data)
         elif data["intention"] == str(Intention.IDENT_CLIENT):
             self._register_client(data)
         elif data["intention"] == str(Intention.SHUTDOWN_SERVER):
@@ -109,14 +119,13 @@ class Server:
             self._logger.info("Client "+data["uuid"]+" shut down, removed it from client list.")
         elif data["intention"] == str(Intention.REQUEST_ACTION):
             self._on_request_action(data)
-        elif data.get("intention") == str(Intention.ACCEPT_SERVER):
-            self._on_accepted(data)
-            self._promote_monitoring_data()
         elif data["intention"] == str(Intention.OM):
             if "v" not in data:
-                self._stop_bzantine(data)
+                self._stop_byzantine(data)
             else:
-                self._on_bzantine_om(data)
+                self._on_byzantine_om(data)
+        elif data["intention"] == str(Intention.OM_RESTART):
+                self._start_byzantine(data["id"])
         elif data["intention"] == Intention.NOT_LEADER:
             self._request_join(rejoin=True)
 
@@ -180,6 +189,7 @@ class Server:
         )
 
     def _request_join(self, rejoin=False):
+        self._tcp_handler._paused = True
         mes = {
             "intention": str(Intention.IDENT_SERVER),
             "uuid": f"{self._uuid}",
@@ -191,13 +201,18 @@ class Server:
         self._broadcast_handler.send(mes)
 
         if not rejoin:
-            for _ in range(MAX_TRIES):
+            max_tries = MAX_TRIES
+            for _ in range(max_tries):
                 data, _ = self._tcp_handler.listen()
                 if data is not None:
                     if data.get("intention") == str(Intention.ACCEPT_SERVER):
                         self._on_accepted(data)
                         break
+                    if data.get("intention") == str(Intention.WAIT_FOR_LEADER):
+                        self._logger.info("There is a leader but i need to wait till the group is ready. Waiting somewhat indefinitely")
+                        max_tries = 10000
 
+            self._tcp_handler._paused = False
             if self._state == State.PENDING:
                 self._logger.info(
                     "Could not find a leader. Declaring myself."
@@ -211,7 +226,7 @@ class Server:
 
         self._promote_monitoring_data()
 
-    def _register_server(self, data):
+    def _register_server(self, data, batch=False):
         self._group_view[data["uuid"]] = (data["address"], data["port"])
 
         welcome_msg = {
@@ -233,20 +248,21 @@ class Server:
             )
         )
 
-        self._logger.debug("New group view is: {}".format(self._group_view))
-
         self._heartbeats[data["uuid"]] = {"ts": datetime.datetime.now().timestamp(), "strikes": 0}
-        self._distribute_group_view()
 
-        self._logger.debug("Checking election required.")
-        if self._election_required():
-            self._logger.info("Election is required, starting election.")
-            self._start_election()
-        else:
-            self._logger.debug("No election required.")
-            if self._can_bzantine():
-                self._rom_handler.pause()
-                self._start_bzantine()
+        if not batch:
+            self._logger.debug("New group view is: {}".format(self._group_view))
+            self._distribute_group_view()
+
+            self._logger.debug("Checking election required.")
+            if self._election_required():
+                self._logger.info("Election is required, starting election.")
+                self._start_election()
+            else:
+                self._logger.debug("No election required.")
+                if self._can_byzantine():
+                    self._rom_handler.pause()
+                    self._start_byzantine()
 
     # election methods --------------------------------------------------------
 
@@ -335,9 +351,9 @@ class Server:
                 self._group_view = group_view
 
                 self._distribute_group_view()
-                if self._can_bzantine():
+                if self._can_byzantine():
                     self._rom_handler.pause()
-                    self._start_bzantine()
+                    self._start_byzantine()
             self._promote_monitoring_data()
 
             return
@@ -373,19 +389,29 @@ class Server:
 
     # byzantine ---------------------------------------------------------------
 
-    def _can_bzantine(self):
+    def _can_byzantine(self):
         n = len(self._group_view)
         f = math.floor((n - 1) / 3)
         return f > 0
 
-    def _start_bzantine(self):
+    def _start_byzantine(self, id = None):
+        if id != None:
+            if self._byzantine_history[id] == ByzantineStates.ABORTED:
+                return
+
+            self._byzantine_history[id] = ByzantineStates.ABORTED
+
+        id = str(uuid4())
+        self._byzantine_leader_cache = ByzantineLeaderCache(id)
+        self._byzantine_history[self._byzantine_leader_cache.id] = ByzantineStates.STARTED
+
         v = self._entries
         n = len(self._group_view)
         f = math.floor((n - 1) / 3)
         if f == 0:
             return
 
-        self._logger.info("Starting bzantine algorithm")
+        self._logger.info("Starting byzantine algorithm")
         dests = list(set(self._group_view.keys()) - set([self._uuid]))
         om = {
             "intention": str(Intention.OM),
@@ -393,39 +419,51 @@ class Server:
             "dests": dests,
             "list": [self._uuid],
             "faulty": f,
+            "id": self._byzantine_leader_cache.id,
         }
         for uuid in dests:
             if not self._tcp_handler.send(om, self._group_view[uuid]):
                 self._logger.warning(f"Could not send om to: {uuid}.")
 
-    def _stop_bzantine(self, om):
-        if self._bzantine_results == None:
-            self._bzantine_results = []
-        if self._bzantine_results_counter == None:
-            self._bzantine_results_counter = Counter()
-        self._bzantine_results.append(om["from"])
-        self._bzantine_results_counter[om["result"]] += 1
+    def _stop_byzantine(self, om):
+        if self._byzantine_leader_cache == None:
+            self._logger.error(f"We shouldn't get byzantine messages. Byzantine isn't running: {om}")
+            return
+
+        self._byzantine_leader_cache.results.append(om["from"])
+        self._byzantine_leader_cache.counter[om["result"]] += 1
         leader_less_group = set(self._group_view.keys()) - set([self._uuid])
-        missing = leader_less_group - set(self._bzantine_results)
+        missing = leader_less_group - set(self._byzantine_leader_cache.results)
         if len(missing) == 0:
-            self._logger.info(f"Stopping bzantine algorithm")
-            mc = self._bzantine_results_counter.most_common()
+            self._logger.info(f"Stopping byzantine algorithm")
+            mc = self._byzantine_leader_cache.counter.most_common()
             self._logger.info("Resuming ROM")
-            self._bzantine_results = None
-            self._bzantine_results_counter = None
+            self._byzantine_leader_cache = None
+            self._byzantine_history[om["id"]] = ByzantineStates.FINISHED
             self._entries = mc[0][0]
             self._rom_handler.resume(value=mc[0][0])
 
-    def _on_bzantine_om(self, om):
-        self._logger.debug(f"Received bzantine message: {om}")
-        if self._bzantine_tree == None:
-            self._bzantine_tree = BzantineTree(len(self._group_view))
+            while not len(self._join_requests) != 0:
+                batch = len(self._join_requests) != 1
+                self._register_server(self._join_requests.pop(), batch)
 
-        if not self._bzantine_tree.is_full():
+    def _on_byzantine_om(self, om):
+        self._logger.debug(f"Received byzantine message: {om}")
+        byzantine_id = om["id"]
+        if self._byzantine_member_cache == None:
+            self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
+            self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
+        else:
+            if byzantine_id not in self._byzantine_history and self._byzantine_member_cache.id != byzantine_id:
+                self._byzantine_history[self._byzantine_member_cache.id] = ByzantineStates.ABORTED
+                self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
+                self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
+
+        if not self._byzantine_member_cache.tree.is_full():
             dests = list(set(om["dests"]) - set([self._uuid]))
             l = om["list"]
             f = om["faulty"]
-            self._bzantine_tree.push(deepcopy(l), om["v"])
+            self._byzantine_member_cache.tree.push(deepcopy(l), om["v"])
             if f - 1 >= 0:
                 l.insert(0, self._uuid)
                 om_new = {
@@ -433,20 +471,31 @@ class Server:
                     "v": self._entries,
                     "dests": dests,
                     "list": l,
-                    "faulty": f - 1
+                    "faulty": f - 1,
+                    "id": byzantine_id,
                 }
                 for uuid in dests:
                     if not self._tcp_handler.send(om_new, self._group_view[uuid]):
-                        self._logger.warning(f"Could not send om to: {uuid}.")
+                        self._logger.warning(f"Could not send om to: {uuid}. Requesting byzantine restart")
+                        if self._current_leader != self._uuid:
+                            request = {
+                                "intention": str(Intention.OM_RESTART),
+                                "id": byzantine_id,
+                            }
+                            self._tcp_handler.send(request, self._group_view[self._current_leader])
+                        else:
+                            self._start_byzantine(byzantine_id)
 
         # Are we now done? Then complete the algorithm
-        if self._bzantine_tree.is_full():
-            res = self._bzantine_tree.complete()
-            self._bzantine_tree = None
+        if self._byzantine_member_cache.tree.is_full():
+            res = self._byzantine_member_cache.tree.complete()
+            self._byzantine_member_cache = None
+            self._byzantine_history[byzantine_id] = ByzantineStates.FINISHED
             om_new = {
                 "intention": str(Intention.OM),
                 "from": self._uuid,
-                "result": res
+                "result": res,
+                "id": byzantine_id,
             }
             if not self._tcp_handler.send(om_new, self._group_view[self._current_leader]):
                 self._logger.warning(f"Could not send stop om to current leader")
@@ -512,7 +561,7 @@ class Server:
                 self._logger.warning(
                     f"Received heartbeat from {data['uuid']} who is not in group view. Will register them as a new member."
                 )
-                self._register_server()
+                self._register_server(data)
         else:
             self._tcp_handler.send({"intention": str(Intention.NOT_LEADER)}, (data['address'],data['port']))
 
@@ -540,7 +589,7 @@ class Server:
         to_remove = []
         for (uuid,addr_and_port) in self._clients.items():
             if not self._tcp_handler.send({"intention": str(Intention.UPDATE_ENTRIES), "entries": self._entries}, addr_and_port):
-                to_remove.insert(uuid)
+                to_remove.append(uuid)
                 self._logger.warn("Marking a client for removal due to failure of sending them a message")
         for uuid in to_remove:
             self._clients.pop(uuid)
@@ -548,7 +597,7 @@ class Server:
     def _on_request_action(self,res):
         if not self._clients.get(res["uuid"]):
             self._clients[res["uuid"]] = (res["address"],res["port"])
-            self.info("Seems like a discarded client reconnected, readding it to the client list.")
+            self._logger.info("Seems like a discarded client reconnected, readding it to the client list.")
         self._logger.info(f"Client {res['uuid']} is requesting an action.")
         self._requests.put(res)
         self._update_lock()
@@ -637,7 +686,8 @@ class Server:
         #TODO currently doesn't work
         self._rom_handler.join()
         self._logger.debug("Stopping heartbeat timer.")
-        self._heartbeat_timer.cancel()
+        if self._heartbeat_timer is not None:
+            self._heartbeat_timer.cancel()
 
         if leader_address and self._current_leader != self._uuid:
             self._logger.debug("Sending shutdown signal to leader.")
