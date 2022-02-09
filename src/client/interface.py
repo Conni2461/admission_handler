@@ -5,8 +5,7 @@ import sys
 import threading
 from typing import Optional
 
-from louie import dispatcher
-from PySide2 import QtCore, QtWidgets
+from PySide2 import QtCore, QtGui, QtWidgets
 
 from ..utils.common import Invokeable
 from ..utils.constants import MAX_ENTRIES
@@ -66,32 +65,58 @@ class ClientUI(QtWidgets.QDialog):
         self._client_listener.server_changed.connect(self._on_server_changed)
         self._client_listener.client_shutdown.connect(self._on_client_shutdown)
 
+        self._reset_timer = QtCore.QTimer()
+
         self._setup_ui()
 
         self._client_listener.start()
 
 
     def _setup_ui(self):
-        lyt = QtWidgets.QVBoxLayout(self)
+
+        self._stack = QtWidgets.QStackedLayout(self)
+
+        main_widg = QtWidgets.QWidget()
+        main = QtWidgets.QVBoxLayout(main_widg)
+        self._stack.addWidget(main_widg)
 
         self._server_lbl = QtWidgets.QLabel("Not connected to a server.")
-        lyt.addWidget(self._server_lbl)
+        main.addWidget(self._server_lbl)
 
         self._count_lbl = QtWidgets.QLabel(f"Current count: 0/{MAX_ENTRIES}")
-        lyt.addWidget(self._count_lbl)
+        main.addWidget(self._count_lbl)
 
         self._action_btn = QtWidgets.QPushButton("Request Access")
-        lyt.addWidget(self._action_btn)
+        main.addWidget(self._action_btn)
 
         self._leaving_btn = QtWidgets.QPushButton("Someone Leaving")
-        lyt.addWidget(self._leaving_btn)
+        main.addWidget(self._leaving_btn)
 
         self._status_lbl = QtWidgets.QLabel()
-        lyt.addWidget(self._status_lbl)
+        main.addWidget(self._status_lbl)
+
+        pth = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons8-close-64.png")
+        stop_pxmp = QtGui.QPixmap(pth)
+        stop_lbl = QtWidgets.QLabel()
+        stop_lbl.setPixmap(stop_pxmp)
+        pth = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons8-check-64.png")
+        go_pxmp = QtGui.QPixmap(pth)
+        go_lbl = QtWidgets.QLabel()
+        go_lbl.setPixmap(go_pxmp)
+
+        stop_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        go_lbl.setAlignment(QtCore.Qt.AlignCenter)
+
+        self._stack.addWidget(stop_lbl)
+        self._stack.addWidget(go_lbl)
+
+        self._stack.setCurrentIndex(0)
 
         self._action_btn.clicked.connect(self._on_action_btn_clicked)
         self._leaving_btn.clicked.connect(self._on_leaving_btn_clicked)
 
+    def _reset_stack(self):
+        self._stack.setCurrentIndex(0)
 
     def _on_leaving_btn_clicked(self):
         self._client.QUEUE.put(Invokeable(ON_ENTRY_REQUEST, inc=False))
@@ -112,16 +137,23 @@ class ClientUI(QtWidgets.QDialog):
 
     def _on_access_response(self, data):
         response = data["response"]
-        if response["status"]:
+        if response["status"] == True:
+            self._stack.setCurrentIndex(2)
             self._action_btn.setText("Access Granted!")
             if response.get("message"):
                 self._status_lbl.setText(f"Last action: {response['message']}")
-        else:
+        elif response["status"] == False:
+            self._stack.setCurrentIndex(1)
             if response.get("message"):
                 self._status_lbl.setText(f"Last action: {response['message']}.")
+        else:
+            pass
 
         self._action_btn.setText("Request Access")
         self._action_btn.setEnabled(True)
+
+        if response["status"] in [True, False]:
+            self._reset_timer.singleShot(1000, self._reset_stack)
 
     def _on_server_changed(self, data):
         server = data["server"]

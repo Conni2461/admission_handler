@@ -21,11 +21,17 @@ class KeyboardListener(SocketThread):
 
     def run(self):
         while not self.stopped:
-            if input("Please enter dec to decrease or anything else to send an entry request\n") == "dec":
+            inpt = input("Please enter dec to decrease or anything else to send an entry request\n")
+            if inpt == "dec":
                 self.emit(
                     signal=ON_ENTRY_REQUEST,
                     inc=False
                 )
+            elif inpt == "exit":
+                self.emit(
+                    signal="quit",
+                )
+                break
             else:
                 self.emit(
                     signal=ON_ENTRY_REQUEST,
@@ -132,7 +138,7 @@ class Client:
             self.entries = data["entries"]
             self._logger.info(f"Current Entries: {self.entries} of {MAX_ENTRIES}")
 
-            self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"status": True}))
+            self.UI_QUEUE.put(Invokeable(ON_ACCESS_RESPONSE, response={"status": None}))
             self.UI_QUEUE.put(Invokeable(ON_COUNT_CHANGED, count=data["entries"]))
 
         elif data["intention"] == str(Intention.DENY_ENTRY):
@@ -175,13 +181,16 @@ class Client:
                         self._on_broadcast(**item.kwargs)
                     elif item.signal == ON_ENTRY_REQUEST:
                         self._on_action_request(**item.kwargs)
+                    elif item.signal == "quit":
+                        break
 
                 except queue.Empty:
                     pass
         except KeyboardInterrupt:
             self._logger.debug("Interrupted.")
-            self._shut_down()
-            try:
-                sys.exit(0)
-            except SystemExit:
-                os._exit(0)
+
+        self._shut_down()
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
