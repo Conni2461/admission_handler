@@ -224,6 +224,8 @@ class Server:
                     self._tcp_handler.port,
                 )
                 self._rom_handler.set_group_view(self._group_view)
+        else:
+            self._tcp_handler._paused = False
 
         self._promote_monitoring_data()
 
@@ -409,6 +411,7 @@ class Server:
         id = str(uuid4())
         self._byzantine_leader_cache = ByzantineLeaderCache(id)
         self._byzantine_history[self._byzantine_leader_cache.id] = ByzantineStates.STARTED
+        self._promote_monitoring_data()
 
         v = self._entries
         n = len(self._group_view)
@@ -447,15 +450,16 @@ class Server:
             self._byzantine_history[om["id"]] = ByzantineStates.FINISHED
             self._entries = mc[0][0]
             self._rom_handler.resume(value=mc[0][0])
+            self._promote_monitoring_data()
 
     def _on_byzantine_om(self, om):
         self._logger.debug(f"Received byzantine message: {om}")
         byzantine_id = om["id"]
         if self._byzantine_member_cache == None:
             self._logger.info("Started byzantine")
-            self._tcp_handler.set_timeout(2)
             self._byzantine_member_cache = ByzantineMemberCache(byzantine_id, len(self._group_view))
             self._byzantine_history[byzantine_id] = ByzantineStates.STARTED
+            self._promote_monitoring_data()
         else:
             if byzantine_id not in self._byzantine_history and self._byzantine_member_cache.id != byzantine_id:
                 self._logger.info("Aborted and restarted byzantine")
@@ -492,10 +496,10 @@ class Server:
 
         # Are we now done? Then complete the algorithm
         if self._byzantine_member_cache.tree.is_full():
-            self._tcp_handler.reset_timeout()
             res = self._byzantine_member_cache.tree.complete()
             self._byzantine_member_cache = None
             self._byzantine_history[byzantine_id] = ByzantineStates.FINISHED
+            self._promote_monitoring_data()
             om_new = {
                 "intention": str(Intention.OM),
                 "from": self._uuid,
@@ -659,7 +663,15 @@ class Server:
     # other methods -----------------------------------------------------------
 
     def _promote_monitoring_data(self):
-        msg = {"intention": str(Intention.MONITOR_MESSAGE), "uuid": self._uuid, "clients": self._clients, "election": self._participating, "state": self._state.name, "entries": self._entries}
+        msg = {
+            "intention": str(Intention.MONITOR_MESSAGE),
+            "uuid": self._uuid,
+            "clients": self._clients,
+            "election": self._participating,
+            "byzantine": self._byzantine_leader_cache is not None or self._byzantine_member_cache is not None,
+            "state": self._state.name,
+            "entries": self._entries
+        }
         self._broadcast_handler.send(msg)
 
     def _set_leader(self, state=True):

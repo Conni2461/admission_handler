@@ -17,6 +17,12 @@ class ByzantineTree:
         self._head = None
         self._len = 0
 
+        prev = 1
+        self._max = 1
+        for i in range(1, self._height):
+            prev = prev * (n - 1 - i)
+            self._max += prev
+
     def push(self, l, v):
         self._len += 1
         if self._head == None:
@@ -33,11 +39,7 @@ class ByzantineTree:
         current.children.append(ByzantineNode(l, v))
 
     def is_full(self):
-        max = 1
-        for i in range(1, self._height):
-            max *= self._n - (i + 1)
-
-        return (self._len - 1) == max
+        return self._len == self._max
 
     def _find_mc_for_level(self, node, level):
         if level == 0:
