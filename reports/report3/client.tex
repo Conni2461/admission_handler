@@ -2,5 +2,18 @@
 
 \begin{document}
 \subsection{Client}
+A fresh client broadcasts its existence followed by waiting for the first answer it receives from a server, repeating the process if necessary.
+It notifies that server to register and get updated on the latest entry count as it changes, then waits.
+For demonstration purposes, an entry request or leave notification can be triggered via console input or GUI (see Client GUI).
+The Client does not wait for an answer, instead getting triggered to display relevant messages on receiving either an entry permit or denial, as well as when receiving updates to the current entry count.
+If a message cannot be passed to the server successfully, or if the server sends a shutdown message, it discards the current server and repeats the process of finding a new connection.
 
+\subsection{Server-side Processing and Locking}
+A server stores any entry requests or leave notifications in a queue before trying to acquire the lock on the current number of entries if it is currently open.
+This behavior is additionally triggered whenever the server receives an unlock notification and has a non-empty queue of requests.
+By using totally ordered multicast communication for locking and unlocking messages, we ensure that all servers are on the same page regarding the state of the lock.
+If a server receives its own lock message while the lock is open, it processes all requests currently queued.
+We judged that leave notifications would not need confirmation, while the server will only increase the number of entries if it was able to pass on the entry acceptance message to the respective client.
+As soon as the queue is empty, the server announces the new number of entries to its group via multicast before releasing its hold on the lock.
+Additionally, it notifies all registered clients of the new number of entries, while other servers do the same upon receiving the update.
 \end{document}
