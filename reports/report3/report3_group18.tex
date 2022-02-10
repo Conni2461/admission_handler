@@ -68,14 +68,14 @@ We will have sent invitations to our private code repository on github by the ti
 \section{Discussion and Conclusion}
 Working on this project made clear that even a very simple application requires a large amount of effort before it can be safely run in a distributed way, despite the aspect of security being ignored.
 \\\\
-From basic functionality to algorithms used for voting, finding a consensus and ensuring data integrity, additional considerations had to be made for cases such as members or message-recipients becoming unreachable mid-process. Which of these issues to handle had how to handle them had to be made based on severeness of impact on the system as covering all of them would have not been possible in the given time.
+From basic functionality to algorithms used for voting, finding a consensus and ensuring data integrity, additional considerations had to be made for cases such as members or message-recipients becoming unreachable mid-process. Which of these issues to handle had how to handle them had to be made based on severeness of impact on the system, as covering all of them would have not been possible in the given time.
 Frequently, new edge cases would be found during tests and dealt with  before making sure to reproduce them correctly during later tests to ensure they had been fixed.
 Additionally, locating a fault often proved more complex than when dealing with a local or monolithic system, often requiring to log all messages received by the different system components and backtrack to exactly what went wrong in the first place.
 
 Future considerations would include finding an alternate solution to using heartbeats. As the group view relies heavily on (missed) heart beats, it can take a noticeable amount of time for the system to update depending on the heartbeat-interval.
 This also means that at times, multicast messaging stalls until the system is sorted out again. The system is eventually-consistent, nevertheless, how well suited this is for a real-time application is debatable.
 Additionally, tests with eight or more servers clearly showed the limitations of the byzantine algorithm, as its exponential message complexity flooded the channel, also stalling the system.
-In general, not much consideration was given to message complexity as it was not the objective of this project. However it did show the importance of complexity and efficient algorithms within such a system as the above implementation quickly brought our consumer-grade hardware to a sweat.
+In general, not much consideration was given to message complexity, as it was not the objective of this project. However, it did show the importance of complexity and efficient algorithms within such a system, as the above implementation quickly brought our consumer-grade hardware to a sweat.
 \\\\
 All in all, the experience gained from this project should help in making better decisions not only when developing system components actually concerned with distribution, but also when developing components that will run in a distributed system and should thus be ready to deal with faults not present in a monolithic system.
 \end{document}
