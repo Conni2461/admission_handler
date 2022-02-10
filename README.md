@@ -1,6 +1,6 @@
 # Distributed Admission Handler
 
-Distributed system class project.
+Distributed systems class project
 
 ## Usage
 
