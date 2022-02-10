@@ -1,6 +1,7 @@
 \documentclass[runningheads]{llncs}
 \usepackage{xr}
 \externaldocument{mrequirement_analysis}
+\externaldocument{multicast}
 
 \begin{document}
 
@@ -8,15 +9,17 @@
 
 The current global group view is handled and kept up to date by the leader. Group view updates occur in the following cases:
 \begin{itemize}
-    \item a member joins the group
+    \item a member requests to join the group
     \item a member shuts down intentionally and notifies the leader
     \item a member fails to send a heartbeat to the leader for two intervals in a row.
     \item an election has taken place and the leader re-evaluates the group view
 \end{itemize}
 Any changes on the group view trigger the leader to distribute the group view to all members of the group via TCP.
 
-\subsubsection{Heartbeats} \label{heartbeats}
+\subsubsection{Dynamic Discovery}
+When a leader \textit{L} receives a \textit{join request} by another server \textit{S\textsubscript{NEW}} it will first check, if it is currently able to accept a new member. This decision is based on whether the \textit{L} is currently participating in a leader election or a byzantine fault tolerance algorithm. Should either be the case, \textit{L} will return a message to \textit{S\textsubscript{NEW}}, notifying it to try again at a later point. Should \textit{L} be free to take on a new server, it will start the process of registering it. \textit{S\textsubscript{NEW}} is added to \textit{L}s group view and heartbeat dictionary. A \textit{welcome\_message} is sent to \textit{S\textsubscript{NEW}}, informing it that it has been accepted along with additional information. This information contains the UID of leader, the current group view, and additional data regarding the \textit{Multicast}. More information on this in \ref{multicastchanges}. Following this, \textit{L} will distribute the group view to all members to ensure synchronicity. Subsequently \textit{L} checks whether an election is necessary based on the UID of \textit{S\textsubscript{NEW}} and if so, start the election. Should this not be the case, \textit{L} synchronizes the system by running the byzantine fault tolerance algorithm.
 
+\subsubsection{Heartbeats} \label{heartbeats}
 Heartbeats are used to monitor the status of the members of the group view. They are used in a bilateral fashion, meaning that the leader checks for failed members as well as members checking that the leader is still operational.
 
 Heartbeats are sent out by each member of the group to the leader via TCP. This action is performed by a threaded timer. Should the leader have shut down or crashed without notifying the group, the TCP connection will fail and the members of the group will trigger a new election. Parallel to this, the leader performs checks on the heartbeat dictionary it maintains. Also triggered by a threaded timer, the leader will check all registered group members and calculate the time difference between the current time and the latest heartbeat it has received from this member.
