@@ -95,11 +95,11 @@ class ClientUI(QtWidgets.QDialog):
         self._status_lbl = QtWidgets.QLabel()
         main.addWidget(self._status_lbl)
 
-        pth = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons8-close-64.png")
+        pth = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "close-64.png")
         stop_pxmp = QtGui.QPixmap(pth)
         stop_lbl = QtWidgets.QLabel()
         stop_lbl.setPixmap(stop_pxmp)
-        pth = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons8-check-64.png")
+        pth = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "check-64.png")
         go_pxmp = QtGui.QPixmap(pth)
         go_lbl = QtWidgets.QLabel()
         go_lbl.setPixmap(go_pxmp)
