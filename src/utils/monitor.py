@@ -51,7 +51,7 @@ class Monitor(QtWidgets.QDialog):
 
         self._model = QtGui.QStandardItemModel()
 
-        self._model.setHorizontalHeaderLabels(["Server", "Clients", "Entries", "Participating", "Byzantine", "State"])
+        self._model.setHorizontalHeaderLabels(["Server", "Name", "Clients", "Entries", "Participating", "Byzantine", "State"])
 
         self._view = QtWidgets.QTableView()
         self._view.setModel(self._model)
@@ -91,6 +91,7 @@ class Monitor(QtWidgets.QDialog):
 
     def _add_server(self, server):
         item = QtGui.QStandardItem(server["uuid"])
+        name_item = QtGui.QStandardItem(server["name"])
         clients_item = QtGui.QStandardItem('\n'.join([i for i in server.get('clients', [])]))
         entries_item = QtGui.QStandardItem(f'{server.get("entries")}')
         election_item = QtGui.QStandardItem(f'{server.get("election")}')
@@ -99,6 +100,7 @@ class Monitor(QtWidgets.QDialog):
 
         row = [
             item,
+            name_item,
             clients_item,
             entries_item,
             election_item,
@@ -113,19 +115,22 @@ class Monitor(QtWidgets.QDialog):
             index = self._model.indexFromItem(item)
             row = index.row()
 
-            clients_index = self._model.index(row, 1)
+            name_index = self._model.index(row, 1)
+            self._model.setData(name_index, f'{server.get("name")}')
+
+            clients_index = self._model.index(row, 2)
             self._model.setData(clients_index, '\n'.join([i for i in server.get('clients', [])]))
 
-            entries_index = self._model.index(row, 2)
+            entries_index = self._model.index(row, 3)
             self._model.setData(entries_index, f'{server.get("entries")}')
 
-            election_index = self._model.index(row, 3)
+            election_index = self._model.index(row, 4)
             self._model.setData(election_index, f'{server.get("election")}')
 
-            byzantine_index = self._model.index(row, 4)
+            byzantine_index = self._model.index(row, 5)
             self._model.setData(byzantine_index, f'{server.get("byzantine")}')
 
-            state_index = self._model.index(row, 5)
+            state_index = self._model.index(row, 6)
             self._model.setData(state_index, f'{server.get("state")}')
 
     def closeEvent(self, event):

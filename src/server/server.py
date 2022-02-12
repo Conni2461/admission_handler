@@ -16,7 +16,8 @@ from src.utils.byzantine import (ByzantineLeaderCache, ByzantineMemberCache,
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
 
-from ..utils.common import CircularList, Invokeable, RepeatTimer, get_real_ip
+from ..utils.common import (CircularList, Invokeable, RepeatTimer, get_real_ip,
+                            get_hostname)
 from ..utils.constants import (HEARTBEAT_TIMEOUT, LOGGING_LEVEL, MAX_ENTRIES,
                                MAX_TIMEOUTS, MAX_TRIES, Intention, LockState,
                                State)
@@ -40,6 +41,7 @@ class Server:
         self._heartbeat_timer = None
 
         self._my_ip = get_real_ip()
+        self._my_hostname = get_hostname()
 
         self._tcp_handler = TCPHandler(self.QUEUE)
         self._broadcast_handler = BroadcastHandler(self.QUEUE)
@@ -665,6 +667,7 @@ class Server:
     def _promote_monitoring_data(self):
         msg = {
             "intention": str(Intention.MONITOR_MESSAGE),
+            "name": f"{self._my_hostname} | {self._my_ip}:{self._tcp_handler.port}",
             "uuid": self._uuid,
             "clients": self._clients,
             "election": self._participating,
