@@ -16,7 +16,8 @@ from src.utils.byzantine import (ByzantineLeaderCache, ByzantineMemberCache,
 from src.utils.rom_handler import ROMulticastHandler
 from src.utils.tcp_handler import TCPHandler
 
-from ..utils.common import CircularList, Invokeable, RepeatTimer, get_real_ip
+from ..utils.common import (CircularList, Invokeable, RepeatTimer,
+                            get_hostname, get_real_ip)
 from ..utils.constants import (HEARTBEAT_TIMEOUT, LOGGING_LEVEL, MAX_ENTRIES,
                                MAX_TIMEOUTS, MAX_TRIES, Intention, LockState,
                                State)
@@ -40,6 +41,7 @@ class Server:
         self._heartbeat_timer = None
 
         self._my_ip = get_real_ip()
+        self._my_hostname = get_hostname()
 
         self._tcp_handler = TCPHandler(self.QUEUE)
         self._broadcast_handler = BroadcastHandler(self.QUEUE)
@@ -84,6 +86,11 @@ class Server:
             self._start_election()
         elif data["intention"] == str(Intention.MONITOR_MESSAGE):
             pass
+        elif data["intention"] == str(Intention.RUN_BYZ) and (self._state == State.LEADER):
+            self._logger.info("Got byzantine request.")
+            if self._can_byzantine():
+                    self._rom_handler.pause()
+                    self._start_byzantine()
         else:
             self._logger.debug(f"Received broadcast message: {data}")
 
@@ -125,9 +132,14 @@ class Server:
                 self._on_byzantine_om(data)
         elif data["intention"] == str(Intention.OM_RESTART):
                 self._start_byzantine(data["id"])
-        elif data["intention"] == Intention.NOT_LEADER:
+        elif data["intention"] == str(Intention.NOT_LEADER):
             self._request_join(rejoin=True)
-
+        elif data["intention"] == str(Intention.MANUAL_VALUE_OVERRIDE):
+            self._entries = data["value"]
+            self._logger.info(f"Manually changed entires to: {data['value']}")
+            self._promote_monitoring_data()
+        else:
+            self._logger.warning(f"Got message I can not process: {data}")
     def _on_rom_msg(self, data=None):
         if data == None:
             self._logger.warn("Got called for an empty ROM message!")
@@ -665,6 +677,9 @@ class Server:
     def _promote_monitoring_data(self):
         msg = {
             "intention": str(Intention.MONITOR_MESSAGE),
+            "hostname": self._my_hostname,
+            "ip": self._my_ip,
+            "port":self._tcp_handler.port,
             "uuid": self._uuid,
             "clients": self._clients,
             "election": self._participating,

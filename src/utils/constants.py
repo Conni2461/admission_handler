@@ -46,6 +46,8 @@ class Intention(Enum):
     SHUTDOWN_CLIENT = 23
     TRY_AGAIN = 24
     OM_RESTART = 25
+    MANUAL_VALUE_OVERRIDE = 26
+    RUN_BYZ = 27
 
 class LockState(Enum):
     OPEN = 0
