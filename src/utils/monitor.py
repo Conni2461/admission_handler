@@ -124,7 +124,7 @@ class Monitor(QtWidgets.QDialog):
 
     def _add_server(self, server):
         item = QtGui.QStandardItem(server["uuid"])
-        item.setData((server["ip"], server["port"]), QtCore.Qt.UserRole+3)
+        item.setData((server.get("ip"), server.get("port")), QtCore.Qt.UserRole+3)
         name_item = QtGui.QStandardItem(self._get_name(server))
         clients_item = QtGui.QStandardItem('\n'.join([i for i in server.get('clients', [])]))
         entries_item = QtGui.QStandardItem(f'{server.get("entries")}')
