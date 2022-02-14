@@ -62,6 +62,7 @@ class Monitor(QtWidgets.QDialog):
 
         self._view = QtWidgets.QTableView()
         self._view.setModel(self._model)
+        self._view.setColumnHidden(0, True)
         self._view.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self._view.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
         self._view.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
